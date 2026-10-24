@@ -267,7 +267,7 @@ export default function LandingPage() {
             <Link href="/login" className="hover:text-white transition-colors">App Login</Link>
           </div>
 
-          <p className="text-[11px] font-mono">© 2024 MyTradeJournal. Production release v0.1.0.</p>
+          <p className="text-[11px] font-mono">© 2026 MyTradeJournal. Production release v0.1.0.</p>
         </div>
       </footer>
     </div>
