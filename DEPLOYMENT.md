@@ -49,13 +49,16 @@ The repository includes a production-ready `render.yaml` at the root that provis
 
 | Resource Type | Resource Name | Plan | Region | Description |
 |---|---|---|---|---|
-| **PostgreSQL Database** | `mytradejournal-db` | `starter` ($7/mo) | `oregon` | Persistent PostgreSQL 16 database |
-| **Web Service** | `mytradejournal-backend` | `starter` ($7/mo) | `oregon` | FastAPI ASGI backend with Python 3.11 and uv |
-| **Web Service** | `mytradejournal-frontend` | `starter` ($7/mo) | `oregon` | Next.js 16 production server with Node 20 |
+| **PostgreSQL Database** | `mytradejournal-db` | `free` ($0/mo) | `oregon` | Render Managed PostgreSQL 16 (expires after 30 days) |
+| **Web Service** | `mytradejournal-backend` | `free` ($0/mo) | `oregon` | FastAPI ASGI backend with Python 3.11, uv, and startup migrations |
+| **Web Service** | `mytradejournal-frontend` | `free` ($0/mo) | `oregon` | Next.js 16 production server with Node 20 |
 
-> [!IMPORTANT]
-> **Free Tier vs. Starter Plan for PostgreSQL**:
-> Render's **Free Tier** PostgreSQL database automatically expires and is permanently deleted after 30 days. For production trading data (journal logs, balance history, audit records), use the **Starter** plan ($7/mo) which includes persistent managed storage that never expires.
+> [!NOTE]
+> **Free Tier Characteristics**:
+> - **Cost**: $0 / month (no credit card required).
+> - **Migration Strategy**: Handled on server launch via `RUN_MIGRATIONS_ON_START: "true"` inside `backend/start.sh` (as Render Blueprints do not allow `preDeployCommand` on the free tier).
+> - **Inactivity Sleep**: Free web services spin down after 15 minutes of inactivity; the initial request after sleep takes 30-50 seconds to warm up.
+> - **Database Lifespan**: Render's free PostgreSQL database is valid for 30 days. To retain data permanently without expiration or sleep, change `plan: free` to `plan: starter` in `render.yaml`.
 
 ---
 

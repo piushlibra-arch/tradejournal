@@ -10,7 +10,7 @@ databases:
   - name: mytradejournal-db
     databaseName: tradejournal
     user: tradejournal
-    plan: starter # Persistent managed storage. (Note: Free tier expires after 30 days and deletes data).
+    plan: free # 100% Free Plan ($0/month, expires after 30 days of creation)
     region: oregon # All resources co-located in the same region for fast private networking.
 
 services:
@@ -21,13 +21,14 @@ services:
     name: mytradejournal-backend
     runtime: python
     rootDir: backend
-    plan: starter # Set to 'starter' or 'free'. (Note: preDeployCommand requires starter or higher)
+    plan: free # 100% Free Plan ($0/month)
     region: oregon
     buildCommand: uv sync --frozen
-    preDeployCommand: uv run alembic upgrade head
     startCommand: ./start.sh
     healthCheckPath: /health
     envVars:
+      - key: RUN_MIGRATIONS_ON_START
+        value: "true"
       - key: PYTHON_VERSION
         value: 3.11.10
       - key: ENVIRONMENT
@@ -60,7 +61,7 @@ services:
     name: mytradejournal-frontend
     runtime: node
     rootDir: frontend
-    plan: starter # Set to 'starter' or 'free'
+    plan: free # 100% Free Plan ($0/month)
     region: oregon
     buildCommand: npm ci && npm run build
     startCommand: npm run start

@@ -39,7 +39,7 @@
 - [ ] Connect the GitHub/GitLab repository to Render.
 - [ ] Create the Render Blueprint using `render.yaml`.
 - [ ] Verify or adjust the deployed service names (`mytradejournal-backend`, `mytradejournal-frontend`) if the user selects custom names.
-- [ ] Confirm hosting tier (Starter at $7/mo vs Free tier) based on data retention requirements.
+- [x] Configure hosting tier: Set to 100% Free tier (`plan: free` across backend, frontend, and PostgreSQL) with startup migration support via `RUN_MIGRATIONS_ON_START: "true"`.
 
 ### Blockers or Unresolved Dependencies
 - **None**: All dependencies are locked in `backend/uv.lock` and `frontend/package-lock.json`. Zero external blocking services required.
