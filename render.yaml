@@ -63,7 +63,7 @@ services:
     rootDir: frontend
     plan: free # 100% Free Plan ($0/month)
     region: oregon
-    buildCommand: npm ci && npm run build
+    buildCommand: npm install && npm run build
     startCommand: npm run start
     healthCheckPath: /api/health
     envVars:
