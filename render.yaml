@@ -1,0 +1,74 @@
+# ==============================================================================
+# MyTradeJournal — Render Blueprint Deployment Specification
+# Platform: Render
+# Architecture: Browser -> Next.js Frontend -> FastAPI Backend -> Managed PostgreSQL
+# ==============================================================================
+
+version: "1"
+
+databases:
+  - name: mytradejournal-db
+    databaseName: tradejournal
+    user: tradejournal
+    plan: starter # Persistent managed storage. (Note: Free tier expires after 30 days and deletes data).
+    region: oregon # All resources co-located in the same region for fast private networking.
+
+services:
+  # ----------------------------------------------------------------------------
+  # Backend Web Service: FastAPI + Python 3.11 + uv
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: mytradejournal-backend
+    runtime: python
+    rootDir: backend
+    plan: starter # Set to 'starter' or 'free'. (Note: preDeployCommand requires starter or higher)
+    region: oregon
+    buildCommand: uv sync --frozen
+    preDeployCommand: uv run alembic upgrade head
+    startCommand: ./start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.10
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: APP_NAME
+        value: MyTradeJournal
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mytradejournal-db
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        generateValue: true # Render automatically generates a unique cryptographically secure secret
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: FRONTEND_URL
+        value: https://mytradejournal-frontend.onrender.com
+      - key: CORS_ORIGINS
+        value: http://localhost:3000,https://mytradejournal-frontend.onrender.com
+
+  # ----------------------------------------------------------------------------
+  # Frontend Web Service: Next.js 16 (App Router) + React 19 + TypeScript
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: mytradejournal-frontend
+    runtime: node
+    rootDir: frontend
+    plan: starter # Set to 'starter' or 'free'
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NEXT_PUBLIC_APP_NAME
+        value: MyTradeJournal
+      - key: NEXT_PUBLIC_API_URL
+        value: https://mytradejournal-backend.onrender.com

@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+:root {
+  --background: #090a0d;
+  --foreground: #f1f3f7;
+  --card: #11141a;
+  --card-foreground: #f1f3f7;
+  --popover: #11141a;
+  --popover-foreground: #f1f3f7;
+  --primary: #6366f1;
+  --primary-foreground: #ffffff;
+  --secondary: #1a1e27;
+  --secondary-foreground: #f1f3f7;
+  --muted: #1c212c;
+  --muted-foreground: #8a94a6;
+  --accent: #232a38;
+  --accent-foreground: #ffffff;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #202634;
+  --input: #202634;
+  --ring: #6366f1;
+  --profit: #22c55e;
+  --loss: #ef4444;
+  --surface: #0e1117;
+  --surface-raised: #141821;
+  --radius: 0.5rem;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #232938;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #333c52;
+}
+
+/* Trading P&L utilities */
+.text-profit {
+  color: #22c55e;
+}
+
+.text-loss {
+  color: #ef4444;
+}
+
+.bg-profit-muted {
+  background-color: rgba(34, 197, 94, 0.12);
+}
+
+.bg-loss-muted {
+  background-color: rgba(239, 68, 68, 0.12);
+}
+
+.border-profit {
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.border-loss {
+  border-color: rgba(239, 68, 68, 0.3);
+}
