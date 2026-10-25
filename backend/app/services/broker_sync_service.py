@@ -1,16 +1,17 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.brokers.base import BrokerAccountSummary, BrokerExecution
+from app.brokers.base import BrokerAccountSummary, BrokerExecution, BrokerLedgerEntryItem
 from app.brokers.registry import get_broker_adapter
 from app.core.encryption import decrypt_token, encrypt_token
 from app.core.exceptions import BadRequestError, NotFoundError, UnauthorizedError
 from app.models.broker_connection import BrokerConnection
+from app.models.broker_ledger import BrokerLedgerEntry
 from app.models.execution import Execution
 from app.models.notification import Notification
 from app.models.trade import Trade
@@ -142,8 +143,11 @@ class BrokerSyncService:
         self,
         user_id: uuid.UUID,
         broker_id: str = "dhan",
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
+        sync_ledger: bool = True,
     ) -> Dict[str, Any]:
-        """Fetch executions from broker and map idempotently into journal trades without duplicates."""
+        """Fetch executions and ledger from broker and map idempotently into journal trades without duplicates."""
         clean_broker = broker_id.lower().strip()
         conn = await self.get_connection(user_id, clean_broker)
         if not conn or not conn.encrypted_access_token:
@@ -160,7 +164,10 @@ class BrokerSyncService:
 
         adapter = get_broker_adapter(clean_broker, conn.client_id, access_token)
         try:
-            executions: List[BrokerExecution] = await adapter.fetch_executions()
+            executions: List[BrokerExecution] = await adapter.fetch_executions(
+                from_date=from_date,
+                to_date=to_date,
+            )
         except Exception as e:
             conn.sync_status = "error"
             conn.last_error = str(e)
@@ -197,66 +204,209 @@ class BrokerSyncService:
                 TradingAccount.user_id == user_id,
                 TradingAccount.status == "active",
             ).limit(1)
-            target_account_id = (await self.db.execute(any_acc_stmt)).scalar_one()
+            any_acc_res = await self.db.execute(any_acc_stmt)
+            target_account_id = any_acc_res.scalar_one_or_none()
+            if not target_account_id:
+                new_acc = TradingAccount(
+                    user_id=user_id,
+                    name=f"{clean_broker.title()} Account",
+                    broker_name=clean_broker.title(),
+                    account_type="live",
+                    currency="INR",
+                    initial_balance=Decimal("0"),
+                    status="active",
+                )
+                self.db.add(new_acc)
+                await self.db.flush()
+                target_account_id = new_acc.id
 
         new_trades_count = 0
         new_executions_count = len(new_executions)
 
-        # 2. Insert new executions and construct corresponding Journal Trades
+        # Sort chronologically so opening fills precede closing fills
+        new_executions.sort(key=lambda x: x.executed_at)
+
+        # 2. Process executions and match into trades
         for ex in new_executions:
-            # Create Journal Trade representing the execution
-            trade = Trade(
-                user_id=user_id,
-                account_id=target_account_id,
-                symbol=ex.symbol,
-                asset_class=ex.segment or "EQUITY",
-                direction="long" if ex.side.lower() == "buy" else "short",
-                entry_time=ex.executed_at,
-                entry_price=ex.price,
-                quantity=ex.quantity,
-                contract_size=Decimal("1"),
-                commission=ex.commission,
-                fees=ex.fees,
-                status="closed",
-                setup_name="Broker Import",
-                notes=f"Auto-synchronized from {clean_broker.title()} (Order #{ex.order_id}).",
-                import_source=clean_broker,
-                external_id=ex.external_id,
-                created_at=now,
-                updated_at=now,
-            )
-            self.db.add(trade)
-            await self.db.flush()
+            charges_dict = {
+                "brokerage": float(ex.brokerage),
+                "stt": float(ex.stt),
+                "exchange_turnover": float(ex.exchange_turnover),
+                "sebi_turnover": float(ex.sebi_turnover),
+                "stamp_duty": float(ex.stamp_duty),
+                "gst": float(ex.gst),
+                "other_charges": float(ex.other_charges),
+                "total_charges": float(ex.total_charges),
+                "provenance": ex.charge_provenance,
+            }
 
-            # Attach execution record
-            execution_record = Execution(
-                trade_id=trade.id,
-                user_id=user_id,
-                side=ex.side.lower(),
-                price=ex.price,
-                quantity=ex.quantity,
-                commission=ex.commission,
-                fees=ex.fees,
-                executed_at=ex.executed_at,
-                external_id=ex.external_id,
-                import_source=clean_broker,
-                created_at=now,
+            # Check for an existing open trade that matches the opposite side for this symbol and account
+            expected_opposite_direction = "long" if ex.side.lower() == "sell" else "short"
+            match_trade_stmt = (
+                select(Trade)
+                .where(
+                    Trade.user_id == user_id,
+                    Trade.account_id == target_account_id,
+                    Trade.symbol == ex.symbol,
+                    Trade.direction == expected_opposite_direction,
+                    Trade.status == "open",
+                )
+                .order_by(Trade.entry_time.asc())
+                .limit(1)
             )
-            self.db.add(execution_record)
-            new_trades_count += 1
+            matched_trade = (await self.db.execute(match_trade_stmt)).scalar_one_or_none()
 
-        # 3. Update connection state
+            if matched_trade:
+                # Match execution to close this trade
+                matched_trade.exit_time = ex.executed_at
+                matched_trade.exit_price = ex.price
+                matched_trade.status = "closed"
+
+                # Calculate Gross P&L
+                if matched_trade.direction == "long":
+                    gross_pnl = (ex.price - matched_trade.entry_price) * matched_trade.quantity * matched_trade.contract_size
+                else:
+                    gross_pnl = (matched_trade.entry_price - ex.price) * matched_trade.quantity * matched_trade.contract_size
+
+                matched_trade.gross_pnl = gross_pnl
+                matched_trade.commission = matched_trade.commission + ex.commission
+                matched_trade.fees = matched_trade.fees + ex.fees
+
+                # Accumulate itemized charges
+                existing_charges = matched_trade.charges_breakdown or {}
+                updated_charges = {
+                    "brokerage": float(existing_charges.get("brokerage", 0)) + float(ex.brokerage),
+                    "stt": float(existing_charges.get("stt", 0)) + float(ex.stt),
+                    "exchange_turnover": float(existing_charges.get("exchange_turnover", 0)) + float(ex.exchange_turnover),
+                    "sebi_turnover": float(existing_charges.get("sebi_turnover", 0)) + float(ex.sebi_turnover),
+                    "stamp_duty": float(existing_charges.get("stamp_duty", 0)) + float(ex.stamp_duty),
+                    "gst": float(existing_charges.get("gst", 0)) + float(ex.gst),
+                    "other_charges": float(existing_charges.get("other_charges", 0)) + float(ex.other_charges),
+                    "total_charges": float(existing_charges.get("total_charges", 0)) + float(ex.total_charges),
+                    "provenance": ex.charge_provenance if ex.charge_provenance != "unavailable" else existing_charges.get("provenance", "unavailable"),
+                }
+                matched_trade.charges_breakdown = updated_charges
+                matched_trade.charge_provenance = updated_charges["provenance"]
+
+                # Single verified deduction of charges for net P&L
+                matched_trade.net_pnl = gross_pnl - (matched_trade.commission + matched_trade.fees)
+                matched_trade.updated_at = now
+
+                # Attach execution to matched trade
+                execution_record = Execution(
+                    trade_id=matched_trade.id,
+                    user_id=user_id,
+                    side=ex.side.lower(),
+                    price=ex.price,
+                    quantity=ex.quantity,
+                    commission=ex.commission,
+                    fees=ex.fees,
+                    executed_at=ex.executed_at,
+                    external_id=ex.external_id,
+                    import_source=clean_broker,
+                    charges_breakdown=charges_dict,
+                    charge_provenance=ex.charge_provenance,
+                    created_at=now,
+                )
+                self.db.add(execution_record)
+            else:
+                # Create a new trade representing this position or execution
+                trade = Trade(
+                    user_id=user_id,
+                    account_id=target_account_id,
+                    symbol=ex.symbol,
+                    asset_class=ex.segment or "EQUITY",
+                    direction="long" if ex.side.lower() == "buy" else "short",
+                    entry_time=ex.executed_at,
+                    entry_price=ex.price,
+                    quantity=ex.quantity,
+                    contract_size=Decimal("1"),
+                    commission=ex.commission,
+                    fees=ex.fees,
+                    status="closed",
+                    setup_name="Broker Import",
+                    notes=f"Auto-synchronized from {clean_broker.title()} (Order #{ex.order_id}).",
+                    import_source=clean_broker,
+                    external_id=ex.external_id,
+                    charges_breakdown=charges_dict,
+                    charge_provenance=ex.charge_provenance,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.db.add(trade)
+                await self.db.flush()
+
+                execution_record = Execution(
+                    trade_id=trade.id,
+                    user_id=user_id,
+                    side=ex.side.lower(),
+                    price=ex.price,
+                    quantity=ex.quantity,
+                    commission=ex.commission,
+                    fees=ex.fees,
+                    executed_at=ex.executed_at,
+                    external_id=ex.external_id,
+                    import_source=clean_broker,
+                    charges_breakdown=charges_dict,
+                    charge_provenance=ex.charge_provenance,
+                    created_at=now,
+                )
+                self.db.add(execution_record)
+                new_trades_count += 1
+
+        # 3. Synchronize Ledger if requested
+        ledger_count = 0
+        if sync_ledger:
+            l_from = from_date or (now - timedelta(days=30))
+            l_to = to_date or now
+            try:
+                ledger_items: List[BrokerLedgerEntryItem] = await adapter.fetch_ledger(
+                    from_date=l_from,
+                    to_date=l_to,
+                )
+                # Fetch existing ledger external_ids for user
+                ledger_stmt = select(BrokerLedgerEntry.external_id).where(
+                    BrokerLedgerEntry.user_id == user_id,
+                    BrokerLedgerEntry.broker_id == clean_broker,
+                )
+                existing_ledger_ids = {r[0] for r in (await self.db.execute(ledger_stmt)).fetchall() if r[0]}
+
+                for item in ledger_items:
+                    if item.external_id not in existing_ledger_ids:
+                        ledger_row = BrokerLedgerEntry(
+                            user_id=user_id,
+                            account_id=target_account_id,
+                            broker_id=clean_broker,
+                            external_id=item.external_id,
+                            voucher_date=item.voucher_date,
+                            voucher_number=item.voucher_number,
+                            narration=item.narration,
+                            exchange=item.exchange,
+                            debit=item.debit,
+                            credit=item.credit,
+                            running_balance=item.running_balance,
+                            reconciled=False,
+                            raw_data=item.raw_data,
+                            created_at=now,
+                        )
+                        self.db.add(ledger_row)
+                        ledger_count += 1
+            except Exception as e:
+                # Ledger sync errors shouldn't crash trade sync; log and proceed
+                pass
+
+        # 4. Update connection state
         conn.sync_status = "success"
         conn.last_sync_at = now
         conn.last_error = None
         await self.db.flush()
 
-        # 4. Dispatch success notification
+        # 5. Dispatch success notification
         notif_service = NotificationService(self.db)
         if new_trades_count > 0:
-            msg = f"Successfully synced {new_executions_count} executions and created {new_trades_count} journal trades from {clean_broker.title()}."
+            msg = f"Successfully synced {new_executions_count} executions and {ledger_count} ledger entries from {clean_broker.title()}."
         else:
-            msg = f"Dhan sync complete: All {len(executions)} trades in your account are already up to date."
+            msg = f"{clean_broker.title()} sync complete: All {len(executions)} trades in your account are up to date."
 
         await notif_service.create_notification(
             user_id=user_id,
@@ -264,7 +414,7 @@ class BrokerSyncService:
                 title=f"{clean_broker.upper()} Sync Complete",
                 message=msg,
                 type="success",
-                action_url="/journal",
+                action_url="/accounts",
             ),
         )
 
@@ -273,6 +423,117 @@ class BrokerSyncService:
             "total_fetched": len(executions),
             "new_executions": new_executions_count,
             "new_trades": new_trades_count,
+            "ledger_entries_imported": ledger_count,
             "skipped_duplicates": len(executions) - new_executions_count,
             "last_sync_at": now.isoformat(),
+        }
+
+    async def get_ledger_entries(
+        self,
+        user_id: uuid.UUID,
+        broker_id: str = "dhan",
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Retrieve stored ledger entries with pagination and totals."""
+        clean_broker = broker_id.lower().strip()
+        query = select(BrokerLedgerEntry).where(
+            BrokerLedgerEntry.user_id == user_id,
+            BrokerLedgerEntry.broker_id == clean_broker,
+        )
+
+        if from_date:
+            query = query.where(BrokerLedgerEntry.voucher_date >= from_date)
+        if to_date:
+            query = query.where(BrokerLedgerEntry.voucher_date <= to_date)
+
+        # Count total
+        count_stmt = select(func.count()).select_from(query.subquery())
+        total = (await self.db.execute(count_stmt)).scalar() or 0
+
+        # Totals
+        debit_stmt = select(func.coalesce(func.sum(BrokerLedgerEntry.debit), Decimal("0"))).select_from(query.subquery())
+        credit_stmt = select(func.coalesce(func.sum(BrokerLedgerEntry.credit), Decimal("0"))).select_from(query.subquery())
+        total_debit = (await self.db.execute(debit_stmt)).scalar() or Decimal("0")
+        total_credit = (await self.db.execute(credit_stmt)).scalar() or Decimal("0")
+
+        # Fetch page
+        paginated_stmt = query.order_by(desc(BrokerLedgerEntry.voucher_date)).offset(offset).limit(limit)
+        res = await self.db.execute(paginated_stmt)
+        entries = res.scalars().all()
+
+        return {
+            "broker_id": clean_broker,
+            "total_records": total,
+            "total_debit": float(total_debit),
+            "total_credit": float(total_credit),
+            "net_movement": float(total_credit - total_debit),
+            "entries": [
+                {
+                    "id": str(e.id),
+                    "external_id": e.external_id,
+                    "voucher_date": e.voucher_date.isoformat(),
+                    "voucher_number": e.voucher_number,
+                    "narration": e.narration,
+                    "exchange": e.exchange,
+                    "debit": float(e.debit),
+                    "credit": float(e.credit),
+                    "running_balance": float(e.running_balance),
+                    "reconciled": e.reconciled,
+                }
+                for e in entries
+            ],
+        }
+
+    async def get_charges_summary(
+        self,
+        user_id: uuid.UUID,
+        broker_id: str = "dhan",
+        from_date: Optional[datetime] = None,
+        to_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Aggregate itemized charges across trades for this broker."""
+        clean_broker = broker_id.lower().strip()
+        query = select(Trade).where(
+            Trade.user_id == user_id,
+            Trade.import_source == clean_broker,
+        )
+
+        if from_date:
+            query = query.where(Trade.entry_time >= from_date)
+        if to_date:
+            query = query.where(Trade.entry_time <= to_date)
+
+        res = await self.db.execute(query)
+        trades = res.scalars().all()
+
+        totals = {
+            "brokerage": Decimal("0"),
+            "stt": Decimal("0"),
+            "exchange_turnover": Decimal("0"),
+            "sebi_turnover": Decimal("0"),
+            "stamp_duty": Decimal("0"),
+            "gst": Decimal("0"),
+            "other_charges": Decimal("0"),
+            "total_charges": Decimal("0"),
+        }
+
+        provenance_counts = {}
+        for t in trades:
+            cb = t.charges_breakdown or {}
+            for k in ("brokerage", "stt", "exchange_turnover", "sebi_turnover", "stamp_duty", "gst", "other_charges", "total_charges"):
+                val = Decimal(str(cb.get(k, 0)))
+                totals[k] += val
+
+            prov = t.charge_provenance or "unavailable"
+            provenance_counts[prov] = provenance_counts.get(prov, 0) + 1
+
+        return {
+            "broker_id": clean_broker,
+            "trade_count": len(trades),
+            "charges": {k: float(v) for k, v in totals.items()},
+            "currency": "INR",
+            "provenance_distribution": provenance_counts,
         }

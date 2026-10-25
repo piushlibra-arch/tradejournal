@@ -8,15 +8,42 @@ from pydantic import BaseModel, Field
 class BrokerExecution(BaseModel):
     external_id: str
     order_id: Optional[str] = None
+    exchange_order_id: Optional[str] = None
     symbol: str
     side: str  # "buy" or "sell"
     quantity: Decimal
     price: Decimal
+    
+    # Itemized charges
+    brokerage: Decimal = Decimal("0")
+    stt: Decimal = Decimal("0")
+    exchange_turnover: Decimal = Decimal("0")
+    sebi_turnover: Decimal = Decimal("0")
+    stamp_duty: Decimal = Decimal("0")
+    gst: Decimal = Decimal("0")
+    other_charges: Decimal = Decimal("0")
+    total_charges: Decimal = Decimal("0")
+    charge_provenance: str = "broker_reported"  # broker_reported, ledger_reconciled, estimated, unavailable
+
     commission: Decimal = Decimal("0")
     fees: Decimal = Decimal("0")
     executed_at: datetime
     exchange: Optional[str] = "NSE"
     segment: Optional[str] = "EQ"
+    product_type: Optional[str] = None
+    security_id: Optional[str] = None
+    raw_data: Optional[Dict[str, Any]] = None
+
+
+class BrokerLedgerEntryItem(BaseModel):
+    external_id: str
+    voucher_date: datetime
+    voucher_number: Optional[str] = None
+    narration: str
+    exchange: Optional[str] = None
+    debit: Decimal = Decimal("0")
+    credit: Decimal = Decimal("0")
+    running_balance: Decimal = Decimal("0")
     raw_data: Optional[Dict[str, Any]] = None
 
 
@@ -57,6 +84,15 @@ class BaseBrokerAdapter(ABC):
         to_date: Optional[datetime] = None,
     ) -> List[BrokerExecution]:
         """Fetch historical executions / trade book records from the broker."""
+        pass
+
+    @abstractmethod
+    async def fetch_ledger(
+        self,
+        from_date: datetime,
+        to_date: datetime,
+    ) -> List[BrokerLedgerEntryItem]:
+        """Fetch ledger account debit/credit movements within a date range."""
         pass
 
     @abstractmethod

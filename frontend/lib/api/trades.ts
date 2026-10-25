@@ -37,6 +37,18 @@ export interface Trade {
   notes: string | null
   import_source: string | null
   external_id: string | null
+  charges_breakdown?: {
+    brokerage?: number
+    stt?: number
+    exchange_turnover?: number
+    sebi_turnover?: number
+    stamp_duty?: number
+    gst?: number
+    other_charges?: number
+    total_charges?: number
+    provenance?: string
+  } | null
+  charge_provenance?: string | null
   status: string
   tags: Tag[]
   created_at: string

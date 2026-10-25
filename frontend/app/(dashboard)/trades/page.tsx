@@ -452,11 +452,11 @@ export default function TradeJournalPage() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <span className="text-muted-foreground">Entry Price:</span>
-                  <span className="font-mono text-white ml-1.5">${selectedTrade.entry_price}</span>
+                  <span className="font-mono text-white ml-1.5">{selectedTrade.import_source === "dhan" ? "₹" : "$"}{selectedTrade.entry_price}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Exit Price:</span>
-                  <span className="font-mono text-white ml-1.5">{selectedTrade.exit_price ? `$${selectedTrade.exit_price}` : "Open"}</span>
+                  <span className="font-mono text-white ml-1.5">{selectedTrade.exit_price ? `${selectedTrade.import_source === "dhan" ? "₹" : "$"}${selectedTrade.exit_price}` : "Open"}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Quantity:</span>
@@ -468,14 +468,58 @@ export default function TradeJournalPage() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Commission:</span>
-                  <span className="font-mono text-white ml-1.5">${selectedTrade.commission}</span>
+                  <span className="font-mono text-white ml-1.5">{selectedTrade.import_source === "dhan" ? "₹" : "$"}{selectedTrade.commission}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Fees:</span>
-                  <span className="font-mono text-white ml-1.5">${selectedTrade.fees}</span>
+                  <span className="font-mono text-white ml-1.5">{selectedTrade.import_source === "dhan" ? "₹" : "$"}{selectedTrade.fees}</span>
                 </div>
               </div>
             </div>
+
+            {/* Itemized Charges & Taxes */}
+            {selectedTrade.charges_breakdown && (
+              <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 space-y-2.5">
+                <div className="flex items-center justify-between border-b border-[#202634] pb-1.5">
+                  <h3 className="text-xs font-semibold text-white">Itemized Broker Charges & Taxes</h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono">
+                    {selectedTrade.charges_breakdown.provenance || "broker_reported"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+                  <div>
+                    <span className="text-muted-foreground">Brokerage:</span>
+                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.brokerage || 0).toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">STT / CTT:</span>
+                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.stt || 0).toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Exchange Turnover:</span>
+                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.exchange_turnover || 0).toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">GST (18%):</span>
+                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.gst || 0).toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Stamp Duty:</span>
+                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.stamp_duty || 0).toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">SEBI Turnover:</span>
+                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.sebi_turnover || 0).toFixed(2)}</span>
+                  </div>
+                  <div className="col-span-2 pt-1 border-t border-[#1e2330] flex justify-between font-bold text-xs">
+                    <span className="text-muted-foreground">Total Deducted Charges:</span>
+                    <span className="text-rose-400">
+                      -₹{(selectedTrade.charges_breakdown.total_charges || (parseFloat(selectedTrade.commission) + parseFloat(selectedTrade.fees))).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Risk Levels */}
             <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 space-y-2.5">

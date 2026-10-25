@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -117,6 +117,8 @@ class TradeResponse(BaseModel):
     notes: Optional[str] = None
     import_source: Optional[str] = None
     external_id: Optional[str] = None
+    charges_breakdown: Optional[Dict[str, Any]] = None
+    charge_provenance: Optional[str] = "unavailable"
     status: str
     tags: List[TagSimple] = []
     created_at: str

@@ -3,7 +3,9 @@
 import React, { useState, useEffect } from "react"
 import {
   brokersApi,
+  BrokerChargesSummary,
   BrokerConnection,
+  BrokerLedgerEntry,
   BrokerSyncResult,
 } from "@/lib/api/brokers"
 import {
@@ -17,20 +19,43 @@ import {
   ExternalLink,
   Loader2,
   Trash2,
+  Calendar,
+  Receipt,
+  BookOpen,
+  Info,
 } from "lucide-react"
 
 export function DhanBrokerCard({ onSyncSuccess }: { onSyncSuccess?: () => void }) {
   const [connections, setConnections] = useState<BrokerConnection[]>([])
   const [loading, setLoading] = useState(true)
   const [showConnectModal, setShowConnectModal] = useState(false)
+  const [showSyncModal, setShowSyncModal] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<BrokerSyncResult | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  // Form State
+  // Active View Tab: 'overview' | 'charges' | 'ledger'
+  const [activeTab, setActiveTab] = useState<"overview" | "charges" | "ledger">("overview")
+
+  // Charges & Ledger State
+  const [chargesSummary, setChargesSummary] = useState<BrokerChargesSummary | null>(null)
+  const [ledgerEntries, setLedgerEntries] = useState<BrokerLedgerEntry[]>([])
+  const [ledgerLoading, setLedgerLoading] = useState(false)
+  const [chargesLoading, setChargesLoading] = useState(false)
+
+  // Connect Form State
   const [clientId, setClientId] = useState("")
   const [accessToken, setAccessToken] = useState("")
+
+  // Sync Form State
+  const [syncFromDate, setSyncFromDate] = useState(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 30)
+    return d.toISOString().split("T")[0]
+  })
+  const [syncToDate, setSyncToDate] = useState(() => new Date().toISOString().split("T")[0])
+  const [syncLedgerChecked, setSyncLedgerChecked] = useState(true)
 
   const loadConnections = async () => {
     setLoading(true)
@@ -44,11 +69,44 @@ export function DhanBrokerCard({ onSyncSuccess }: { onSyncSuccess?: () => void }
     }
   }
 
+  const loadCharges = async () => {
+    setChargesLoading(true)
+    try {
+      const summary = await brokersApi.getChargesSummary("dhan")
+      setChargesSummary(summary)
+    } catch {
+      // Ignore
+    } finally {
+      setChargesLoading(false)
+    }
+  }
+
+  const loadLedger = async () => {
+    setLedgerLoading(true)
+    try {
+      const data = await brokersApi.getLedger("dhan")
+      if (data) {
+        setLedgerEntries(data.entries || [])
+      }
+    } catch {
+      // Ignore
+    } finally {
+      setLedgerLoading(false)
+    }
+  }
+
   useEffect(() => {
     loadConnections()
   }, [])
 
   const dhanConn = connections.find((c) => c.broker_id === "dhan" && c.is_active)
+
+  useEffect(() => {
+    if (dhanConn) {
+      if (activeTab === "charges") loadCharges()
+      if (activeTab === "ledger") loadLedger()
+    }
+  }, [activeTab, dhanConn])
 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -79,14 +137,22 @@ export function DhanBrokerCard({ onSyncSuccess }: { onSyncSuccess?: () => void }
     }
   }
 
-  const handleSync = async () => {
+  const handleExecuteSync = async () => {
     setIsSyncing(true)
     setSyncResult(null)
     setErrorMessage(null)
+    setShowSyncModal(false)
     try {
-      const res = await brokersApi.sync("dhan")
+      const res = await brokersApi.sync(
+        "dhan",
+        syncFromDate || undefined,
+        syncToDate || undefined,
+        syncLedgerChecked
+      )
       setSyncResult(res)
       await loadConnections()
+      if (activeTab === "charges") await loadCharges()
+      if (activeTab === "ledger") await loadLedger()
       if (onSyncSuccess) onSyncSuccess()
     } catch (err: any) {
       setErrorMessage(err?.response?.data?.detail || "Dhan synchronization failed.")
@@ -117,11 +183,11 @@ export function DhanBrokerCard({ onSyncSuccess }: { onSyncSuccess?: () => void }
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-white tracking-wide">DhanHQ API v2 Integration</h3>
               <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                Official API
+                Official Free Tier
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Read-only trade history synchronization directly from your personal Dhan trading account.
+              Automated trade history, itemized charges, and ledger reconciliation for NSE/BSE Equity & F&O.
             </p>
           </div>
         </div>
@@ -130,12 +196,12 @@ export function DhanBrokerCard({ onSyncSuccess }: { onSyncSuccess?: () => void }
           {dhanConn ? (
             <div className="flex items-center gap-2">
               <button
-                onClick={handleSync}
+                onClick={() => setShowSyncModal(true)}
                 disabled={isSyncing}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
-                {isSyncing ? "Syncing..." : "Sync Dhan Trades"}
+                {isSyncing ? "Syncing..." : "Sync Trades & Ledger"}
               </button>
               <button
                 onClick={handleDisconnect}
@@ -156,40 +222,197 @@ export function DhanBrokerCard({ onSyncSuccess }: { onSyncSuccess?: () => void }
         </div>
       </div>
 
-      {/* Status Bar */}
+      {/* Tabs navigation for connected accounts */}
+      {dhanConn && (
+        <div className="flex items-center gap-2 pt-3 border-b border-[#202634] text-xs">
+          <button
+            onClick={() => setActiveTab("overview")}
+            className={`pb-2 px-2 font-medium transition-colors border-b-2 cursor-pointer ${
+              activeTab === "overview"
+                ? "border-emerald-400 text-emerald-400 font-bold"
+                : "border-transparent text-muted-foreground hover:text-white"
+            }`}
+          >
+            Connection Overview
+          </button>
+          <button
+            onClick={() => setActiveTab("charges")}
+            className={`flex items-center gap-1 pb-2 px-2 font-medium transition-colors border-b-2 cursor-pointer ${
+              activeTab === "charges"
+                ? "border-emerald-400 text-emerald-400 font-bold"
+                : "border-transparent text-muted-foreground hover:text-white"
+            }`}
+          >
+            <Receipt className="h-3.5 w-3.5" /> Itemized Charges
+          </button>
+          <button
+            onClick={() => setActiveTab("ledger")}
+            className={`flex items-center gap-1 pb-2 px-2 font-medium transition-colors border-b-2 cursor-pointer ${
+              activeTab === "ledger"
+                ? "border-emerald-400 text-emerald-400 font-bold"
+                : "border-transparent text-muted-foreground hover:text-white"
+            }`}
+          >
+            <BookOpen className="h-3.5 w-3.5" /> Ledger Reconciliation
+          </button>
+        </div>
+      )}
+
+      {/* Status Bar / Body */}
       <div className="mt-4">
         {loading ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
             <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> Checking connection status...
           </div>
         ) : dhanConn ? (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
-              <div className="p-3 rounded-lg bg-[#171b26] border border-[#202634]">
-                <span className="text-[10px] text-muted-foreground uppercase block">Client ID</span>
-                <span className="font-bold text-white mt-0.5 block">{dhanConn.client_id}</span>
-              </div>
-              <div className="p-3 rounded-lg bg-[#171b26] border border-[#202634]">
-                <span className="text-[10px] text-muted-foreground uppercase block">Sync Status</span>
-                <span className="inline-flex items-center gap-1 text-emerald-400 font-bold mt-0.5">
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Ready & Connected
-                </span>
-              </div>
-              <div className="p-3 rounded-lg bg-[#171b26] border border-[#202634]">
-                <span className="text-[10px] text-muted-foreground uppercase block">Last Sync</span>
-                <span className="text-[#9db2c8] mt-0.5 block">
-                  {dhanConn.last_sync_at ? new Date(dhanConn.last_sync_at).toLocaleString() : "Never"}
-                </span>
-              </div>
-            </div>
+          <div>
+            {activeTab === "overview" && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
+                  <div className="p-3 rounded-lg bg-[#171b26] border border-[#202634]">
+                    <span className="text-[10px] text-muted-foreground uppercase block">Client ID</span>
+                    <span className="font-bold text-white mt-0.5 block">{dhanConn.client_id}</span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#171b26] border border-[#202634]">
+                    <span className="text-[10px] text-muted-foreground uppercase block">Sync Status</span>
+                    <span className="inline-flex items-center gap-1 text-emerald-400 font-bold mt-0.5">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Ready & Connected
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#171b26] border border-[#202634]">
+                    <span className="text-[10px] text-muted-foreground uppercase block">Last Sync</span>
+                    <span className="text-[#9db2c8] mt-0.5 block">
+                      {dhanConn.last_sync_at ? new Date(dhanConn.last_sync_at).toLocaleString() : "Never"}
+                    </span>
+                  </div>
+                </div>
 
-            {/* Sync Results Feedback */}
-            {syncResult && (
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 text-xs">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                <span>
-                  Sync complete: {syncResult.new_executions} new executions imported ({syncResult.skipped_duplicates} existing trades skipped).
-                </span>
+                {/* Sync Results Feedback */}
+                {syncResult && (
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 text-xs">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                    <span>
+                      Sync complete: {syncResult.new_executions} executions imported, {syncResult.new_trades} trades updated, and {syncResult.ledger_entries_imported || 0} ledger records stored. ({syncResult.skipped_duplicates} duplicate executions skipped).
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === "charges" && (
+              <div className="space-y-3 text-xs">
+                {chargesLoading ? (
+                  <div className="flex items-center justify-center p-6 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin text-emerald-400 mr-2" /> Loading charges breakdown...
+                  </div>
+                ) : chargesSummary ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">Imported Dhan Trades:</span>
+                        <span className="font-bold text-white font-mono">{chargesSummary.trade_count}</span>
+                      </div>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px] font-medium">
+                        Verified Broker-Reported Deductions
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 font-mono">
+                      <div className="p-2.5 rounded-lg bg-[#171b26] border border-[#202634]">
+                        <span className="text-[10px] text-muted-foreground uppercase block">Brokerage</span>
+                        <span className="font-bold text-white text-sm">₹{chargesSummary.charges.brokerage.toFixed(2)}</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-[#171b26] border border-[#202634]">
+                        <span className="text-[10px] text-muted-foreground uppercase block">STT / CTT</span>
+                        <span className="font-bold text-white text-sm">₹{chargesSummary.charges.stt.toFixed(2)}</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-[#171b26] border border-[#202634]">
+                        <span className="text-[10px] text-muted-foreground uppercase block">Exchange Turnover</span>
+                        <span className="font-bold text-white text-sm">₹{chargesSummary.charges.exchange_turnover.toFixed(2)}</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-[#171b26] border border-[#202634]">
+                        <span className="text-[10px] text-muted-foreground uppercase block">GST (18%)</span>
+                        <span className="font-bold text-white text-sm">₹{chargesSummary.charges.gst.toFixed(2)}</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-[#171b26] border border-[#202634]">
+                        <span className="text-[10px] text-muted-foreground uppercase block">Stamp Duty</span>
+                        <span className="font-bold text-white text-sm">₹{chargesSummary.charges.stamp_duty.toFixed(2)}</span>
+                      </div>
+                      <div className="p-2.5 rounded-lg bg-[#171b26] border border-[#202634]">
+                        <span className="text-[10px] text-muted-foreground uppercase block">SEBI Turnover</span>
+                        <span className="font-bold text-white text-sm">₹{chargesSummary.charges.sebi_turnover.toFixed(2)}</span>
+                      </div>
+                      <div className="col-span-2 p-2.5 rounded-lg bg-emerald-950/30 border border-emerald-500/30">
+                        <span className="text-[10px] text-emerald-400 font-bold uppercase block">Total Deducted Charges</span>
+                        <span className="font-extrabold text-emerald-400 text-base">₹{chargesSummary.charges.total_charges.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                      <Info className="h-3.5 w-3.5 text-blue-400" />
+                      All charges are deducted exactly once from Gross P&L to calculate accurate Net P&L.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-muted-foreground">
+                    No trade charges available yet. Run a sync to retrieve your trade book with itemized charges.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === "ledger" && (
+              <div className="space-y-3 text-xs">
+                {ledgerLoading ? (
+                  <div className="flex items-center justify-center p-6 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin text-emerald-400 mr-2" /> Loading ledger records...
+                  </div>
+                ) : ledgerEntries.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="overflow-x-auto rounded-lg border border-[#202634]">
+                      <table className="w-full text-left font-mono text-[11px]">
+                        <thead className="bg-[#171b26] text-muted-foreground border-b border-[#202634]">
+                          <tr>
+                            <th className="py-2 px-3">Date</th>
+                            <th className="py-2 px-3">Narration</th>
+                            <th className="py-2 px-3">Voucher #</th>
+                            <th className="py-2 px-3">Exch</th>
+                            <th className="py-2 px-3 text-right">Debit</th>
+                            <th className="py-2 px-3 text-right">Credit</th>
+                            <th className="py-2 px-3 text-right">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#1e2330]">
+                          {ledgerEntries.map((row) => (
+                            <tr key={row.id} className="hover:bg-[#1a202c]/50 transition-colors">
+                              <td className="py-2 px-3 text-[#9db2c8]">
+                                {new Date(row.voucher_date).toLocaleDateString()}
+                              </td>
+                              <td className="py-2 px-3 text-white max-w-xs truncate" title={row.narration}>
+                                {row.narration}
+                              </td>
+                              <td className="py-2 px-3 text-muted-foreground">{row.voucher_number || "—"}</td>
+                              <td className="py-2 px-3 text-muted-foreground">{row.exchange || "NSE"}</td>
+                              <td className="py-2 px-3 text-right text-rose-400">
+                                {row.debit > 0 ? `-₹${row.debit.toFixed(2)}` : "—"}
+                              </td>
+                              <td className="py-2 px-3 text-right text-emerald-400">
+                                {row.credit > 0 ? `+₹${row.credit.toFixed(2)}` : "—"}
+                              </td>
+                              <td className="py-2 px-3 text-right text-white font-bold">
+                                ₹{row.running_balance.toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 text-center text-muted-foreground">
+                    No ledger entries imported yet. Click &quot;Sync Trades & Ledger&quot; with date range enabled.
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -217,6 +440,90 @@ export function DhanBrokerCard({ onSyncSuccess }: { onSyncSuccess?: () => void }
           </div>
         )}
       </div>
+
+      {/* Sync Range Modal */}
+      {showSyncModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-xl border border-[#2a2e39] bg-[#141821] p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#202634] pb-3">
+              <div className="flex items-center gap-2">
+                <Calendar className="h-4 w-4 text-emerald-400" />
+                <h3 className="text-sm font-bold text-white">Sync Dhan Trades & Ledger</h3>
+              </div>
+              <button
+                onClick={() => setShowSyncModal(false)}
+                className="text-muted-foreground hover:text-white text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              <p className="text-muted-foreground">
+                Fetch historical trades with pagination and ledger debits/credits directly from DhanHQ API v2.
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-muted-foreground font-medium mb-1">From Date</label>
+                  <input
+                    type="date"
+                    value={syncFromDate}
+                    onChange={(e) => setSyncFromDate(e.target.value)}
+                    className="w-full h-8 rounded-lg border border-[#2a2e39] bg-[#1a202c] px-3 text-white focus:border-emerald-500 focus:outline-none font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-muted-foreground font-medium mb-1">To Date</label>
+                  <input
+                    type="date"
+                    value={syncToDate}
+                    onChange={(e) => setSyncToDate(e.target.value)}
+                    className="w-full h-8 rounded-lg border border-[#2a2e39] bg-[#1a202c] px-3 text-white focus:border-emerald-500 focus:outline-none font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="syncLedger"
+                  checked={syncLedgerChecked}
+                  onChange={(e) => setSyncLedgerChecked(e.target.checked)}
+                  className="rounded border-[#2a2e39] bg-[#1a202c] text-emerald-500 focus:ring-emerald-500"
+                />
+                <label htmlFor="syncLedger" className="text-muted-foreground cursor-pointer">
+                  Sync account ledger entries and charges reconciliation
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#202634]">
+                <button
+                  type="button"
+                  onClick={() => setShowSyncModal(false)}
+                  className="px-3 py-1.5 rounded-lg border border-[#2a2e39] text-muted-foreground hover:text-white cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteSync}
+                  disabled={isSyncing}
+                  className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isSyncing ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Synchronizing...
+                    </>
+                  ) : (
+                    "Start Sync"
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Connect Modal */}
       {showConnectModal && (

@@ -1,6 +1,6 @@
 # DhanHQ API v2 Integration Guide — MyTradeJournal
 
-This guide details how to connect your personal **Dhan** account to MyTradeJournal for automated, read-only trade history synchronization.
+This guide details how to connect your personal **Dhan** account to MyTradeJournal for automated, read-only trade history synchronization, itemized regulatory charge tracking, and ledger reconciliation.
 
 ---
 
@@ -9,6 +9,7 @@ This guide details how to connect your personal **Dhan** account to MyTradeJourn
 - A live personal trading account with **Dhan** ([https://dhan.co](https://dhan.co)).
 - Access to the Dhan web portal at [https://web.dhan.co](https://web.dhan.co).
 - **Cost**: **100% Free**. Dhan provides the DhanHQ Trading APIs free of cost to individual account holders for trade book and order discovery. No paid market-data subscription is required.
+- **Exchanges & Segments**: NSE & BSE Equity, Futures, and Options (F&O).
 
 ---
 
@@ -42,8 +43,43 @@ This guide details how to connect your personal **Dhan** account to MyTradeJourn
 
 ## 4. How Synchronization Works
 
-- **Endpoint Used**: Official DhanHQ v2 Trade Book (`GET https://api.dhan.co/v2/trades`).
-- **Duplicate Prevention**: Every execution has an `exchangeTradeId`. MyTradeJournal records this as `dhan_{exchangeTradeId}` in the `executions` table. On every sync, any execution already present in the database is automatically skipped.
-- **Trade Reconciliation**: New executions are automatically linked to a journal trade with the correct symbol, asset class, direction (BUY/SELL), executed price, and timestamp.
-- **Calendar & Journal Sync**: Synced trades immediately appear on your **Calendar** and **Daily Journal** views.
-- **Security**: The access token is encrypted in the database using AES-256 (Fernet) derived from the server's master key. It is never logged or exposed in browser JavaScript.
+### A. Historical Trade Book Synchronization with Pagination
+- **Endpoints Used**:
+  - Date-Range History: `GET https://api.dhan.co/v2/trades/{from-date}/{to-date}/{page}`
+  - Current Day Session: `GET https://api.dhan.co/v2/trades`
+- **Pagination**: Loops starting at page 0 until all trades within the date range are imported.
+- **Duplicate Prevention**: Every execution has an `exchangeTradeId`. MyTradeJournal records this as `dhan_{exchangeTradeId}` in the `executions` table with an external ID index. On every sync, any execution already present in the database is automatically skipped.
+
+### B. Position Matching & Lifecycle
+- Executions are ordered chronologically.
+- When an execution matches an existing open position for the same symbol & account with the opposite direction (e.g. SELL closing a BUY):
+  - The trade is automatically marked `closed`.
+  - Weighted average exit price is assigned.
+  - **Gross P&L** is calculated:
+    - Long: `(exit_price - entry_price) * quantity * contract_size`
+    - Short: `(entry_price - exit_price) * quantity * contract_size`
+  - All regulatory charges from both opening and closing executions are summed.
+  - **Net P&L** is calculated via a single verified deduction: `net_pnl = gross_pnl - total_charges`.
+
+### C. Itemized Regulatory Charge Import
+Every trade and execution records an itemized charge breakdown:
+- **Brokerage**: Broker charges reported by Dhan
+- **STT / CTT**: Securities Transaction Tax
+- **Exchange Turnover**: NSE / BSE transaction fees
+- **GST**: Goods & Services Tax (18% on Brokerage + Turnover)
+- **Stamp Duty**: State stamp duty
+- **SEBI Turnover**: SEBI regulatory fee
+- **Provenance Tracking**: Tagged as `broker_reported` when reported by Dhan API.
+
+### D. Account Ledger Reconciliation
+- **Endpoint Used**: `GET https://api.dhan.co/v2/ledger?from-date={YYYY-MM-DD}&to-date={YYYY-MM-DD}`
+- Imports voucher dates, narrations, voucher numbers, exchanges, debits, credits, and running balances into `broker_ledger_entries`.
+- Allows traders to cross-verify cash deposits, withdrawals, settlement debits, and trade fees against broker ledger records.
+
+---
+
+## 5. Security & Zero Exposure Guarantee
+
+- **AES-256 Backend Encryption**: Tokens are encrypted using Fernet AES-256 before being persisted in PostgreSQL.
+- **Zero Token Leakage**: Tokens are never logged, never returned in frontend API responses, and never stored in browser cookies or local storage.
+- **Read-Only Operation**: MyTradeJournal will NEVER place, modify, or cancel orders on your broker account.

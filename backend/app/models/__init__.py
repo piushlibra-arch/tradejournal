@@ -1,4 +1,5 @@
 from app.models.broker_connection import BrokerConnection
+from app.models.broker_ledger import BrokerLedgerEntry
 from app.models.execution import Execution
 from app.models.import_job import ImportJob, ImportRowError
 from app.models.journal import DailyJournalEntry
@@ -14,6 +15,7 @@ __all__ = [
     "User",
     "TradingAccount",
     "BrokerConnection",
+    "BrokerLedgerEntry",
     "Trade",
     "Execution",
     "Tag",

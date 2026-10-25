@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -69,6 +69,8 @@ class Trade(Base):
     # Import tracking
     import_source: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     external_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    charges_breakdown: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    charge_provenance: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="unavailable")
 
     # Status: open, closed, cancelled
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="closed", index=True)

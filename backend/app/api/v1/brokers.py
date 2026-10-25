@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List, Optional
 import uuid
 from fastapi import APIRouter, Depends, Query, status
@@ -10,9 +11,12 @@ from app.db.session import get_db
 from app.models.broker_connection import BrokerConnection
 from app.models.user import User
 from app.schemas.broker import (
+    BrokerChargesSummaryResponse,
     BrokerConnectPayload,
     BrokerConnectionResponse,
+    BrokerLedgerSummaryResponse,
     BrokerProviderInfo,
+    BrokerSyncPayload,
     BrokerSyncResponse,
 )
 from app.services.broker_sync_service import BrokerSyncService
@@ -76,15 +80,110 @@ async def connect_broker_account(
 
 @router.post("/sync", response_model=BrokerSyncResponse)
 async def sync_broker_trades(
-    broker_id: str = Query("dhan", description="Broker identifier to synchronize"),
+    payload: Optional[BrokerSyncPayload] = None,
+    broker_id: Optional[str] = Query(None, description="Broker identifier to synchronize"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Synchronize trade history from the connected broker into MyTradeJournal."""
+    """Synchronize trade history and ledger from the connected broker into MyTradeJournal."""
     service = BrokerSyncService(db)
-    result = await service.sync_trades(user_id=current_user.id, broker_id=broker_id)
+    
+    # Resolve parameters from payload or query param fallback
+    target_broker = (payload.broker_id if payload else broker_id) or "dhan"
+    from_date_dt: Optional[datetime] = None
+    to_date_dt: Optional[datetime] = None
+    sync_ledger = True
+
+    if payload:
+        sync_ledger = payload.sync_ledger
+        if payload.from_date:
+            try:
+                from_date_dt = datetime.fromisoformat(payload.from_date)
+            except Exception:
+                pass
+        if payload.to_date:
+            try:
+                to_date_dt = datetime.fromisoformat(payload.to_date)
+            except Exception:
+                pass
+
+    result = await service.sync_trades(
+        user_id=current_user.id,
+        broker_id=target_broker,
+        from_date=from_date_dt,
+        to_date=to_date_dt,
+        sync_ledger=sync_ledger,
+    )
     await db.commit()
     return BrokerSyncResponse(**result)
+
+
+@router.get("/ledger", response_model=BrokerLedgerSummaryResponse)
+async def get_broker_ledger(
+    broker_id: str = Query("dhan", description="Broker identifier"),
+    from_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    to_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve imported broker ledger entries and debit/credit reconciliation totals."""
+    from_dt: Optional[datetime] = None
+    to_dt: Optional[datetime] = None
+    if from_date:
+        try:
+            from_dt = datetime.fromisoformat(from_date)
+        except Exception:
+            pass
+    if to_date:
+        try:
+            to_dt = datetime.fromisoformat(to_date)
+        except Exception:
+            pass
+
+    service = BrokerSyncService(db)
+    result = await service.get_ledger_entries(
+        user_id=current_user.id,
+        broker_id=broker_id,
+        from_date=from_dt,
+        to_date=to_dt,
+        limit=limit,
+        offset=offset,
+    )
+    return BrokerLedgerSummaryResponse(**result)
+
+
+@router.get("/charges-summary", response_model=BrokerChargesSummaryResponse)
+async def get_broker_charges_summary(
+    broker_id: str = Query("dhan", description="Broker identifier"),
+    from_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    to_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve itemized charge totals (Brokerage, STT, Exchange, GST, Stamp Duty, SEBI) and provenance stats."""
+    from_dt: Optional[datetime] = None
+    to_dt: Optional[datetime] = None
+    if from_date:
+        try:
+            from_dt = datetime.fromisoformat(from_date)
+        except Exception:
+            pass
+    if to_date:
+        try:
+            to_dt = datetime.fromisoformat(to_date)
+        except Exception:
+            pass
+
+    service = BrokerSyncService(db)
+    result = await service.get_charges_summary(
+        user_id=current_user.id,
+        broker_id=broker_id,
+        from_date=from_dt,
+        to_date=to_dt,
+    )
+    return BrokerChargesSummaryResponse(**result)
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
