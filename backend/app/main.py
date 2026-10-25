@@ -77,8 +77,13 @@ async def readiness_check():
             "app": settings.APP_NAME,
             "environment": settings.ENVIRONMENT,
         }
-    except Exception as e:
-        logger.error("readiness_check_failed", error=str(e))
+    except Exception as exc:
+        # Avoid leaking raw database DSNs/passwords that can be embedded in driver connection errors
+        logger.error(
+            "readiness_check_failed",
+            error_type=type(exc).__name__,
+            error_summary="Failed to execute database connection probe",
+        )
         return JSONResponse(
             status_code=503,
             content={"status": "unhealthy", "database": "disconnected"},

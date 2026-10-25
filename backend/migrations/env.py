@@ -9,7 +9,19 @@ from app.core.config import settings
 from app.db.base import Base
 
 # Import all models to ensure metadata is populated
-from app.models import Execution, ImportJob, ImportRowError, Strategy, Tag, Trade, TradeTag, TradingAccount, User  # noqa: F401
+from app.models import (  # noqa: F401
+    DailyJournalEntry,
+    Execution,
+    ImportJob,
+    ImportRowError,
+    RiskRule,
+    Strategy,
+    Tag,
+    Trade,
+    TradeTag,
+    TradingAccount,
+    User,
+)
 
 config = context.config
 

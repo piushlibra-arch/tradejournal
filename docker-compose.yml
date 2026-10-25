@@ -2,15 +2,15 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: tradejournal
-      POSTGRES_PASSWORD: tradejournal_dev
-      POSTGRES_DB: tradejournal
+      POSTGRES_USER: ${POSTGRES_USER:-tradejournal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tradejournal_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-tradejournal}
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tradejournal"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tradejournal}"]
       interval: 5s
       timeout: 5s
       retries: 5

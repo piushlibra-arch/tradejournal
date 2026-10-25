@@ -1,6 +1,10 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from "axios"
 
-let rawBaseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+// Primary: NEXT_PUBLIC_API_URL, fallback: NEXT_PUBLIC_API_BASE_URL or local default
+let rawBaseUrl =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  "http://localhost:8000"
 if (rawBaseUrl && !rawBaseUrl.startsWith("http://") && !rawBaseUrl.startsWith("https://")) {
   rawBaseUrl = `https://${rawBaseUrl}`
 }
