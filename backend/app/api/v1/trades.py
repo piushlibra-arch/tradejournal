@@ -64,7 +64,7 @@ def _trade_to_response(trade) -> TradeResponse:
 @router.get("", response_model=TradeListResponse)
 async def list_trades(
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=1000),
     account_id: Optional[uuid.UUID] = None,
     symbol: Optional[str] = None,
     direction: Optional[str] = None,

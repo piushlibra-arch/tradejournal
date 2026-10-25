@@ -41,23 +41,31 @@ export default function CalendarPage() {
         const startMonthStr = `${year}-${String(month + 1).padStart(2, "0")}-01`
         const endMonthStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`
 
-        // Fetch trades
-        const tradesRes = await tradesApi.list({
-          start_date: `${startMonthStr}T00:00:00`,
-          end_date: `${endMonthStr}T23:59:59`,
-          page_size: 500,
-        })
-        setTrades(tradesRes.trades)
+        // Fetch trades & journal entries independently with Promise.allSettled
+        const [tradesResult, journalResult] = await Promise.allSettled([
+          tradesApi.list({
+            start_date: `${startMonthStr}T00:00:00`,
+            end_date: `${endMonthStr}T23:59:59`,
+            page_size: 500,
+          }),
+          journalApi.list(startMonthStr, endMonthStr),
+        ])
 
-        // Fetch journal entries
-        try {
-          const journalRes = await journalApi.list(startMonthStr, endMonthStr)
-          setJournalEntries(journalRes.items)
-        } catch (jErr) {
+        if (tradesResult.status === "fulfilled") {
+          setTrades(tradesResult.value.trades || [])
+        } else {
+          console.error("Failed to load calendar trades:", tradesResult.reason)
+          setTrades([])
+        }
+
+        if (journalResult.status === "fulfilled") {
+          setJournalEntries(journalResult.value.items || [])
+        } else {
+          console.error("Failed to load calendar journal entries:", journalResult.reason)
           setJournalEntries([])
         }
       } catch (err) {
-        console.error(err)
+        console.error("Unexpected error in calendar loadData:", err)
       } finally {
         setLoading(false)
       }
@@ -68,13 +76,26 @@ export default function CalendarPage() {
   // Map trades by calendar day: "YYYY-MM-DD"
   const dailyPnLMap: Record<string, { count: number; netPnl: number; trades: Trade[] }> = {}
   trades.forEach((t) => {
-    if (!t.entry_time || t.net_pnl === null) return
-    const dStr = t.entry_time.slice(0, 10)
+    if (!t.entry_time) return
+
+    // Convert timestamp to local YYYY-MM-DD
+    let dStr = t.entry_time.slice(0, 10)
+    try {
+      const parsed = new Date(t.entry_time)
+      if (!isNaN(parsed.getTime())) {
+        const y = parsed.getFullYear()
+        const m = String(parsed.getMonth() + 1).padStart(2, "0")
+        const d = String(parsed.getDate()).padStart(2, "0")
+        dStr = `${y}-${m}-${d}`
+      }
+    } catch {}
+
     if (!dailyPnLMap[dStr]) {
       dailyPnLMap[dStr] = { count: 0, netPnl: 0, trades: [] }
     }
     dailyPnLMap[dStr].count += 1
-    dailyPnLMap[dStr].netPnl += parseFloat(t.net_pnl)
+    const pnl = t.net_pnl !== null && t.net_pnl !== undefined ? parseFloat(t.net_pnl) : 0
+    dailyPnLMap[dStr].netPnl += isNaN(pnl) ? 0 : pnl
     dailyPnLMap[dStr].trades.push(t)
   })
 
@@ -293,10 +314,10 @@ export default function CalendarPage() {
                     <BookOpen className="h-3.5 w-3.5 text-indigo-400" /> Daily Journal Entry
                   </span>
                   <button
-                    onClick={() => router.push(`/journal`)}
+                    onClick={() => router.push(`/journal?date=${selectedDayKey}`)}
                     className="flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer"
                   >
-                    Open Full Journal <ExternalLink className="h-3 w-3" />
+                    Open Daily Journal <ExternalLink className="h-3 w-3" />
                   </button>
                 </div>
 
@@ -321,9 +342,17 @@ export default function CalendarPage() {
                     )}
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">
-                    No journal entry logged for this day yet. You can document pre-market plans and lessons learned.
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      No journal entry logged for this day yet.
+                    </p>
+                    <button
+                      onClick={() => router.push(`/journal?date=${selectedDayKey}`)}
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer shrink-0 ml-2 hover:underline"
+                    >
+                      Write Debrief →
+                    </button>
+                  </div>
                 )}
               </div>
 

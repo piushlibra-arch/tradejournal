@@ -1,6 +1,7 @@
 "use client"
 
-import React, { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback, Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import { journalApi } from "@/lib/api/journal"
 import { tradesApi, Trade } from "@/lib/api/trades"
 import { formatPnL, pnlColor, cn } from "@/lib/utils"
@@ -13,12 +14,22 @@ import {
   Clock,
   Sparkles,
   BookOpen,
+  Loader2,
 } from "lucide-react"
 
-export default function DailyJournalPage() {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+function JournalContent() {
+  const searchParams = useSearchParams()
+  const dateParam = searchParams.get("date")
+  const [date, setDate] = useState(dateParam || new Date().toISOString().slice(0, 10))
   const [saving, setSaving] = useState(false)
   const [savedSuccess, setSavedSuccess] = useState(false)
+
+  // Update date if URL query param changes
+  useEffect(() => {
+    if (dateParam && dateParam !== date) {
+      setDate(dateParam)
+    }
+  }, [dateParam])
 
   // Journal form state
   const [preMarketPlan, setPreMarketPlan] = useState("")
@@ -359,5 +370,19 @@ export default function DailyJournalPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function DailyJournalPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[400px] flex items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-indigo-500" />
+        </div>
+      }
+    >
+      <JournalContent />
+    </Suspense>
   )
 }
