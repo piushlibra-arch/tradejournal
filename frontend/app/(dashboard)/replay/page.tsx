@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useMemo, useCallback } from "react"
+import React, { useState, useEffect, useMemo } from "react"
 import dynamic from "next/dynamic"
 import { formatPnL, pnlColor, cn } from "@/lib/utils"
 import { marketDataApi, BackendCandle } from "@/lib/api/market-data"
@@ -435,12 +435,14 @@ export default function TradeReplayPage() {
             </div>
           </div>
 
-          {/* Embedded TradingView Live Terminal - Full 760px Height with SMA Overlay (No Squishing Subpanes) */}
-          <TradingViewAdvancedChart
-            symbol={activeTvSymbol}
-            interval={timeframe}
-            height={760}
-          />
+          {/* Embedded TradingView Live Terminal - Full Responsive Height with Drawing Tools */}
+          <div className="w-full h-[620px] sm:h-[700px] lg:h-[760px] min-h-[520px] relative rounded-xl overflow-hidden border border-[#2a2e39] bg-[#131722] shadow-2xl">
+            <TradingViewAdvancedChart
+              symbol={activeTvSymbol}
+              interval={timeframe}
+              height="100%"
+            />
+          </div>
 
           {/* Real-time Paper Trading Simulator Bar */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
@@ -617,7 +619,6 @@ export default function TradeReplayPage() {
             candles={visibleCandles}
             symbolName={selectedInstrument.id}
             timeframe={timeframe === "1" ? "1m" : timeframe === "5" ? "5m" : timeframe === "15" ? "15m" : timeframe === "60" ? "1h" : "15m"}
-            currentPrice={currentPrice}
             height={640}
           />
 

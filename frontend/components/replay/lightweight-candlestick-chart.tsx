@@ -26,7 +26,6 @@ interface ReplayChartProps {
   candles: CandleData[]
   symbolName?: string
   timeframe?: string
-  currentPrice?: number
   height?: number
 }
 
@@ -46,7 +45,6 @@ export default function LightweightCandlestickChart({
   candles,
   symbolName = "XAUUSD",
   timeframe = "5m",
-  currentPrice,
   height = 640,
 }: ReplayChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
