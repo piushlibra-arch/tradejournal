@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.engine import AnalyticsEngine
 from app.api.dependencies import get_current_user
+from app.core.exceptions import NotFoundError
 from app.db.session import get_db
 from app.models.trade import Trade
 from app.models.trading_account import TradingAccount
@@ -27,6 +28,14 @@ async def _fetch_trades(
     query = select(Trade).where(Trade.user_id == user_id)
     filters = []
     if account_id:
+        acc_check = await db.execute(
+            select(TradingAccount.id).where(
+                TradingAccount.id == account_id,
+                TradingAccount.user_id == user_id,
+            )
+        )
+        if not acc_check.scalar_one_or_none():
+            raise NotFoundError("Trading account not found or access denied")
         filters.append(Trade.account_id == account_id)
     if start_date:
         filters.append(Trade.entry_time >= start_date)
@@ -50,11 +59,26 @@ async def get_analytics_overview(
 ):
     trades = await _fetch_trades(db, current_user.id, account_id, start_date, end_date)
     initial_balance = Decimal("0")
+    currency = "USD"
+
     if account_id:
-        acc_res = await db.execute(select(TradingAccount).where(TradingAccount.id == account_id))
+        acc_res = await db.execute(
+            select(TradingAccount).where(
+                TradingAccount.id == account_id,
+                TradingAccount.user_id == current_user.id,
+            )
+        )
         acc = acc_res.scalar_one_or_none()
-        if acc:
-            initial_balance = acc.initial_balance
+        if not acc:
+            raise NotFoundError("Trading account not found or access denied")
+        initial_balance = acc.initial_balance
+        currency = acc.currency
+    else:
+        # Check primary account currency
+        acc_stmt = select(TradingAccount.currency).where(TradingAccount.user_id == current_user.id).limit(1)
+        acc_c = (await db.execute(acc_stmt)).scalar_one_or_none()
+        if acc_c:
+            currency = acc_c
 
     kpis = AnalyticsEngine.calculate_kpis(trades, initial_balance)
     by_symbol = AnalyticsEngine.calculate_breakdown_by_symbol(trades)
@@ -64,6 +88,7 @@ async def get_analytics_overview(
         "kpis": kpis,
         "by_symbol": by_symbol,
         "daily_pnl": daily,
+        "currency": currency,
     }
 
 

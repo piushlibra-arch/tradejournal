@@ -1,6 +1,12 @@
 from decimal import Decimal
 from typing import List, Optional, Tuple
 
+from app.core.currency import (
+    CURRENCY_SYMBOLS,
+    calculate_trade_pnl,
+    resolve_instrument_currency,
+)
+
 
 def calculate_realized_pnl(
     direction: str,
@@ -176,6 +182,66 @@ def test_r_multiple_calculation():
 
     # Short: Entry 200, Stop 205, Exit 190 -> Risk 5, Profit 10 -> 2R
     assert calculate_r_multiple("short", Decimal("200"), Decimal("190"), Decimal("205")) == Decimal("2.00")
+
+
+def test_resolve_instrument_currency():
+    # Indian Options & Futures
+    assert resolve_instrument_currency("NIFTY 25000 CE") == "INR"
+    assert resolve_instrument_currency("BANKNIFTY 52000 PE") == "INR"
+    assert resolve_instrument_currency("RELIANCE.NS") == "INR"
+    assert resolve_instrument_currency("TATASTEEL", exchange="NSE") == "INR"
+    assert resolve_instrument_currency("INFY", segment="NSE_EQ") == "INR"
+
+    # US Instruments
+    assert resolve_instrument_currency("AAPL", account_currency="USD") == "USD"
+    assert resolve_instrument_currency("ES", account_currency="USD") == "USD"
+    assert resolve_instrument_currency("NQ", account_currency="USD") == "USD"
+
+    # Forex
+    assert resolve_instrument_currency("EURUSD") == "USD"
+    assert resolve_instrument_currency("EURGBP") == "GBP"
+    assert resolve_instrument_currency("USDINR") == "INR"
+
+    # Crypto
+    assert resolve_instrument_currency("BTCUSDT") == "USD"
+    assert resolve_instrument_currency("BTCINR") == "INR"
+
+
+def test_indian_options_pnl_single_lot_size():
+    """Verify that lot size is applied exactly once for Indian options (tradedQuantity = 50 for 1 NIFTY lot)."""
+    # Buy NIFTY 25000 CE at ₹120.00, Sell at ₹155.00, Quantity = 50 shares (1 lot), contract_size = 1
+    gross, net = calculate_trade_pnl(
+        direction="long",
+        entry_price=Decimal("120.00"),
+        exit_price=Decimal("155.00"),
+        quantity=Decimal("50"),
+        contract_size=Decimal("1"),  # lot size already in quantity
+        commission=Decimal("40.00"),  # Brokerage: ₹20 buy + ₹20 sell
+        fees=Decimal("15.50"),       # STT + GST + turnover
+    )
+    # Gross = (155 - 120) * 50 = 35 * 50 = 1750
+    assert gross == Decimal("1750.00")
+    # Net = 1750 - (40 + 15.50) = 1694.50
+    assert net == Decimal("1694.50")
+    # Symbol
+    assert CURRENCY_SYMBOLS["INR"] == "₹"
+
+
+def test_us_futures_pnl_multiplier():
+    """Verify US futures contract multiplier calculation."""
+    # NQ: 1 contract, multiplier = 20. Buy at 20000.00, Sell at 20050.00
+    gross, net = calculate_trade_pnl(
+        direction="long",
+        entry_price=Decimal("20000.00"),
+        exit_price=Decimal("20050.00"),
+        quantity=Decimal("1"),
+        contract_size=Decimal("20"),  # NQ point multiplier
+        commission=Decimal("4.50"),
+    )
+    # Gross = (20050 - 20000) * 1 * 20 = 50 * 20 = 1000
+    assert gross == Decimal("1000.00")
+    assert net == Decimal("995.50")
+    assert CURRENCY_SYMBOLS["USD"] == "$"
 
     # Missing stop loss returns None safely
     assert calculate_r_multiple("long", Decimal("100"), Decimal("115"), None) is None

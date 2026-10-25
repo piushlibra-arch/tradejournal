@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers.base import BrokerAccountSummary, BrokerExecution, BrokerLedgerEntryItem
 from app.brokers.registry import get_broker_adapter
+from app.core.currency import resolve_instrument_currency
 from app.core.encryption import decrypt_token, encrypt_token
 from app.core.exceptions import BadRequestError, NotFoundError, UnauthorizedError
 from app.models.broker_connection import BrokerConnection
@@ -316,6 +317,7 @@ class BrokerSyncService:
                     account_id=target_account_id,
                     symbol=ex.symbol,
                     asset_class=ex.segment or "EQUITY",
+                    currency=resolve_instrument_currency(symbol=ex.symbol, exchange=ex.exchange, segment=ex.segment, account_currency="INR"),
                     direction="long" if ex.side.lower() == "buy" else "short",
                     entry_time=ex.executed_at,
                     entry_price=ex.price,

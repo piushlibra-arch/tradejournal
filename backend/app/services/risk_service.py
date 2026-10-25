@@ -100,6 +100,16 @@ class RiskService:
         account_id: Optional[uuid.UUID] = None,
     ) -> RiskStatusReport:
         # Fetch active rules for user
+        if account_id:
+            acc_check = await db.execute(
+                select(TradingAccount.id).where(
+                    TradingAccount.id == account_id,
+                    TradingAccount.user_id == user_id,
+                )
+            )
+            if not acc_check.scalar_one_or_none():
+                raise NotFoundError("Trading account not found or access denied")
+
         rule_filters = [RiskRule.user_id == user_id, RiskRule.is_active.is_(True)]
         if account_id:
             rule_filters.append((RiskRule.account_id == account_id) | (RiskRule.account_id.is_(None)))

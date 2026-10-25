@@ -82,8 +82,9 @@ async def delete_strategy(
 @router.get("/{strategy_id}/performance", response_model=StrategyPerformance)
 async def get_strategy_performance(
     strategy_id: uuid.UUID,
+    account_id: Optional[uuid.UUID] = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Compute realized performance and statistics for trades linked to this strategy."""
-    return await StrategyService.get_strategy_performance(db, current_user.id, strategy_id)
+    return await StrategyService.get_strategy_performance(db, current_user.id, strategy_id, account_id=account_id)

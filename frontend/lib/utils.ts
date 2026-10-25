@@ -1,29 +1,32 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
+import {
+  formatCurrency as baseFormatCurrency,
+  formatPnL as baseFormatPnL,
+  getCurrencySymbol,
+  resolveTradeCurrency,
+} from "./currency"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatCurrency(value: number | string | null | undefined, currency = "USD"): string {
-  if (value === null || value === undefined || value === "") return "$0.00"
-  const num = typeof value === "string" ? parseFloat(value) : value
-  if (isNaN(num)) return "$0.00"
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(num)
+export function formatCurrency(
+  value: number | string | null | undefined,
+  currency: string = "USD",
+  decimals: number = 2
+): string {
+  return baseFormatCurrency(value, currency, decimals)
 }
 
-export function formatPnL(value: number | string | null | undefined): string {
-  if (value === null || value === undefined || value === "") return "$0.00"
-  const num = typeof value === "string" ? parseFloat(value) : value
-  if (isNaN(num)) return "$0.00"
-  const prefix = num > 0 ? "+" : ""
-  return prefix + formatCurrency(num)
+export function formatPnL(
+  value: number | string | null | undefined,
+  currency: string = "USD"
+): string {
+  return baseFormatPnL(value, currency)
 }
+
+export { getCurrencySymbol, resolveTradeCurrency }
 
 export function formatPercent(value: number | string | null | undefined, decimals = 1): string {
   if (value === null || value === undefined || value === "") return "0.0%"

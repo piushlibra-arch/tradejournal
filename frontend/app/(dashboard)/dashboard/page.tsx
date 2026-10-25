@@ -3,10 +3,10 @@
 import React, { useState, useEffect } from "react"
 import Link from "next/link"
 import { useAuth } from "@/lib/auth/auth-context"
+import { useAccount } from "@/lib/context/account-context"
 import { tradesApi, Trade } from "@/lib/api/trades"
-import { accountsApi, Account } from "@/lib/api/accounts"
 import { analyticsApi, DashboardSummary, EquityCurvePoint, DailyPnLPoint } from "@/lib/api/analytics"
-import { formatCurrency, formatPnL, formatPercent, pnlColor, cn } from "@/lib/utils"
+import { formatCurrency, formatPnL, formatPercent, pnlColor, cn, getCurrencySymbol, resolveTradeCurrency } from "@/lib/utils"
 import { EquityChart } from "@/components/dashboard/equity-chart"
 import { DailyPnLChart } from "@/components/dashboard/daily-pnl-chart"
 import {
@@ -28,29 +28,27 @@ import {
 
 export default function DashboardPage() {
   const { user } = useAuth()
+  const { accounts, selectedAccountId, selectedAccount, accountCurrency, setSelectedAccountId } = useAccount()
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [equityCurve, setEquityCurve] = useState<EquityCurvePoint[]>([])
   const [dailyPnL, setDailyPnL] = useState<DailyPnLPoint[]>([])
   const [trades, setTrades] = useState<Trade[]>([])
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("")
   const [loading, setLoading] = useState(true)
 
   const loadData = async (accId?: string) => {
     setLoading(true)
+    const effectiveAccId = !accId || accId === "all" ? undefined : accId
     try {
-      const [sumRes, curveRes, dailyRes, tradesRes, accountsRes] = await Promise.all([
-        analyticsApi.getSummary({ account_id: accId || undefined }),
-        analyticsApi.getEquityCurve({ account_id: accId || undefined }),
-        analyticsApi.getDailyPnL({ account_id: accId || undefined }),
-        tradesApi.list({ account_id: accId || undefined, page_size: 10 }),
-        accountsApi.list(),
+      const [sumRes, curveRes, dailyRes, tradesRes] = await Promise.all([
+        analyticsApi.getSummary({ account_id: effectiveAccId }),
+        analyticsApi.getEquityCurve({ account_id: effectiveAccId }),
+        analyticsApi.getDailyPnL({ account_id: effectiveAccId }),
+        tradesApi.list({ account_id: effectiveAccId, page_size: 10 }),
       ])
       setSummary(sumRes)
       setEquityCurve(curveRes)
       setDailyPnL(dailyRes)
       setTrades(tradesRes.trades)
-      setAccounts(accountsRes)
     } catch (err) {
       console.error("Dashboard data load error:", err)
     } finally {
@@ -72,8 +70,8 @@ export default function DashboardPage() {
   const kpis = [
     {
       label: "Net Realized P&L",
-      value: formatPnL(netPnlNum),
-      subtext: `Gross: ${formatCurrency(grossPnlNum)}`,
+      value: formatPnL(netPnlNum, accountCurrency),
+      subtext: `Gross: ${formatCurrency(grossPnlNum, accountCurrency)}`,
       icon: DollarSign,
       color: pnlColor(netPnlNum),
     },
@@ -94,34 +92,34 @@ export default function DashboardPage() {
     {
       label: "Total Trades",
       value: (summary?.total_trades ?? 0).toString(),
-      subtext: `Active Accounts: ${accounts.length}`,
+      subtext: selectedAccount ? `${selectedAccount.name} (${selectedAccount.currency})` : `All Accounts (${accounts.length})`,
       icon: Activity,
       color: "text-foreground",
     },
     {
       label: "Expectancy / Trade",
-      value: formatPnL(expectancyNum),
+      value: formatPnL(expectancyNum, accountCurrency),
       subtext: (summary?.total_trades ?? 0) > 0 ? "Statistical return" : "No trades",
       icon: TrendingUp,
       color: pnlColor(expectancyNum),
     },
     {
       label: "Max Drawdown",
-      value: formatCurrency(maxDdNum),
+      value: formatCurrency(maxDdNum, accountCurrency),
       subtext: `${summary?.max_drawdown_percent ?? 0}% peak-to-trough`,
       icon: AlertTriangle,
       color: maxDdNum > 0 ? "text-rose-400" : "text-muted-foreground",
     },
     {
       label: "Best Trade",
-      value: formatPnL(bestTradeNum),
+      value: formatPnL(bestTradeNum, accountCurrency),
       subtext: "Largest winning fill",
       icon: ArrowUpRight,
       color: "text-emerald-400",
     },
     {
       label: "Worst Trade",
-      value: formatPnL(worstTradeNum),
+      value: formatPnL(worstTradeNum, accountCurrency),
       subtext: "Largest loss position",
       icon: ArrowDownRight,
       color: worstTradeNum < 0 ? "text-rose-400" : "text-muted-foreground",
@@ -146,7 +144,7 @@ export default function DashboardPage() {
             onChange={(e) => setSelectedAccountId(e.target.value)}
             className="h-8 rounded-md border border-[#202634] bg-[#141821] px-2.5 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
           >
-            <option value="">All Accounts Combined</option>
+            <option value="all">All Accounts Combined</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name} ({a.currency})
@@ -302,6 +300,8 @@ export default function DashboardPage() {
               <tbody className="divide-y divide-[#202634]">
                 {trades.map((t) => {
                   const net = t.net_pnl !== null ? parseFloat(t.net_pnl) : null
+                  const tradeCurrency = resolveTradeCurrency(t, accountCurrency)
+                  const sym = getCurrencySymbol(tradeCurrency)
                   return (
                     <tr key={t.id} className="hover:bg-[#141821]/50 transition-colors">
                       <td className="py-2.5 px-4 font-mono text-muted-foreground">
@@ -320,11 +320,11 @@ export default function DashboardPage() {
                           {t.direction}
                         </span>
                       </td>
-                      <td className="py-2.5 px-4 font-mono">${t.entry_price}</td>
-                      <td className="py-2.5 px-4 font-mono">{t.exit_price ? `$${t.exit_price}` : "—"}</td>
+                      <td className="py-2.5 px-4 font-mono">{sym}{t.entry_price}</td>
+                      <td className="py-2.5 px-4 font-mono">{t.exit_price ? `${sym}${t.exit_price}` : "—"}</td>
                       <td className="py-2.5 px-4 font-mono">{t.quantity}</td>
                       <td className={cn("py-2.5 px-4 font-mono font-bold", pnlColor(net))}>
-                        {formatPnL(net)}
+                        {formatPnL(net, tradeCurrency)}
                       </td>
                       <td className="py-2.5 px-4 text-muted-foreground truncate max-w-[120px]">
                         {t.setup_name || "—"}

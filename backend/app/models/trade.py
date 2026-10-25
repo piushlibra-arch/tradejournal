@@ -28,6 +28,7 @@ class Trade(Base):
     # Instrument
     symbol: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     asset_class: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD", index=True)
 
     # Direction and timing
     direction: Mapped[str] = mapped_column(String(10), nullable=False)  # 'long' or 'short'

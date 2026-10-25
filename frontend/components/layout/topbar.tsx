@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth/auth-context"
-import { accountsApi, Account } from "@/lib/api/accounts"
+import { useAccount } from "@/lib/context/account-context"
+import { Account } from "@/lib/api/accounts"
 import { notificationsApi, NotificationItem } from "@/lib/api/notifications"
 import {
   Search,
@@ -24,8 +25,7 @@ import {
 export function TopBar() {
   const { user, logout } = useAuth()
   const router = useRouter()
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("all")
+  const { accounts, selectedAccountId, selectedAccount, setSelectedAccountId } = useAccount()
   const [showUserMenu, setShowUserMenu] = useState(false)
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showNotifications, setShowNotifications] = useState(false)
@@ -35,19 +35,6 @@ export function TopBar() {
   const [unreadCount, setUnreadCount] = useState<number>(0)
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false)
   const notifRef = useRef<HTMLDivElement>(null)
-
-  // Load Accounts
-  useEffect(() => {
-    async function loadAccounts() {
-      try {
-        const data = await accountsApi.list()
-        setAccounts(data)
-      } catch {
-        // Accounts might be empty initially
-      }
-    }
-    loadAccounts()
-  }, [])
 
   // Load Notifications
   const fetchNotifications = async () => {
@@ -126,8 +113,6 @@ export function TopBar() {
         return <Info className="h-4 w-4 text-indigo-400 shrink-0" />
     }
   }
-
-  const selectedAccount = accounts.find((a) => a.id === selectedAccountId)
 
   return (
     <header className="sticky top-0 z-30 flex h-14 w-full items-center justify-between border-b border-[#202634] bg-[#0c0e14]/90 px-6 backdrop-blur-md">

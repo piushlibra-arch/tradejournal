@@ -21,6 +21,7 @@ class TradeCreate(BaseModel):
     account_id: str
     symbol: str = Field(min_length=1, max_length=50)
     asset_class: Optional[str] = Field(default=None, max_length=50)
+    currency: Optional[str] = Field(default=None, max_length=10)
     direction: TradeDirection
     entry_time: datetime
     exit_time: Optional[datetime] = None
@@ -52,6 +53,7 @@ class TradeCreate(BaseModel):
 class TradeUpdate(BaseModel):
     symbol: Optional[str] = Field(default=None, min_length=1, max_length=50)
     asset_class: Optional[str] = Field(default=None, max_length=50)
+    currency: Optional[str] = Field(default=None, max_length=10)
     direction: Optional[TradeDirection] = None
     entry_time: Optional[datetime] = None
     exit_time: Optional[datetime] = None
@@ -91,6 +93,7 @@ class TradeResponse(BaseModel):
     account_id: str
     symbol: str
     asset_class: Optional[str] = None
+    currency: str = "USD"
     direction: str
     entry_time: str
     exit_time: Optional[str] = None

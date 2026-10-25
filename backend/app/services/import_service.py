@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.currency import resolve_instrument_currency
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.importers.generic_csv import GenericCSVImporter
 from app.models.execution import Execution
@@ -46,7 +47,7 @@ class ImportService:
         column_mapping: Dict[str, str],
         broker_source: str = "generic",
     ) -> Dict[str, Any]:
-        await self._verify_account(account_id, user_id)
+        account = await self._verify_account(account_id, user_id)
         existing_ids = await self._get_existing_external_ids(account_id, user_id)
 
         valid_trades, duplicates, errors = self.importer.validate_and_parse_rows(
@@ -76,7 +77,7 @@ class ImportService:
         broker_source: str = "generic",
         skip_duplicates: bool = True,
     ) -> ImportJob:
-        await self._verify_account(account_id, user_id)
+        account = await self._verify_account(account_id, user_id)
         existing_ids = await self._get_existing_external_ids(account_id, user_id)
 
         valid_trades, duplicates, errors = self.importer.validate_and_parse_rows(
@@ -122,6 +123,7 @@ class ImportService:
                 user_id=user_id,
                 account_id=account_id,
                 symbol=t_data["symbol"],
+                currency=resolve_instrument_currency(symbol=t_data["symbol"], account_currency=account.currency),
                 direction=t_data["direction"],
                 entry_time=t_data["entry_time"],
                 exit_time=t_data.get("exit_time"),

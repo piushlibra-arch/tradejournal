@@ -1,8 +1,9 @@
 "use client"
 
-import React, { useState, useEffect, useMemo } from "react"
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import dynamic from "next/dynamic"
 import { formatPnL, pnlColor, cn } from "@/lib/utils"
+import { formatPrice, getCurrencySymbol } from "@/lib/currency"
 import { marketDataApi, BackendCandle } from "@/lib/api/market-data"
 import { accountsApi, Account } from "@/lib/api/accounts"
 import { tradesApi } from "@/lib/api/trades"
@@ -21,6 +22,8 @@ import {
   TrendingUp,
   TrendingDown,
   Layers,
+  AlertCircle,
+  Loader2,
 } from "lucide-react"
 
 // Dynamically import TradingView Advanced Real-Time Chart
@@ -35,37 +38,56 @@ const LightweightCandlestickChart = dynamic(
   { ssr: false }
 )
 
+export type ReplayState = "idle" | "loading" | "ready" | "playing" | "paused" | "completed" | "error"
+
 export interface InstrumentConfig {
   id: string
   name: string
   tvSymbol: string
-  category: "Commodities" | "Futures" | "Forex" | "Crypto" | "Equities"
+  category: "Commodities" | "Futures" | "Forex" | "Crypto" | "Equities" | "Indices"
   basePrice: number
   tickSize: number
   multiplier: number
+  currency?: string
 }
 
-const POPULAR_INSTRUMENTS: InstrumentConfig[] = [
-  { id: "XAUUSD", name: "Gold Spot (XAU/USD)", tvSymbol: "OANDA:XAUUSD", category: "Commodities", basePrice: 2720.50, tickSize: 0.1, multiplier: 100 },
-  { id: "BTCUSDT", name: "Bitcoin / Tether", tvSymbol: "BINANCE:BTCUSDT", category: "Crypto", basePrice: 80500.0, tickSize: 1.0, multiplier: 1 },
-  { id: "ETHUSDT", name: "Ethereum / Tether", tvSymbol: "BINANCE:ETHUSDT", category: "Crypto", basePrice: 2850.0, tickSize: 0.5, multiplier: 1 },
-  { id: "NQ", name: "E-mini Nasdaq 100", tvSymbol: "CME_MINI:NQ1!", category: "Futures", basePrice: 20450.0, tickSize: 0.25, multiplier: 20 },
-  { id: "ES", name: "E-mini S&P 500", tvSymbol: "CME_MINI:ES1!", category: "Futures", basePrice: 5820.0, tickSize: 0.25, multiplier: 50 },
-  { id: "EURUSD", name: "Euro / US Dollar", tvSymbol: "FX:EURUSD", category: "Forex", basePrice: 1.0850, tickSize: 0.0001, multiplier: 100000 },
-  { id: "AAPL", name: "Apple Inc.", tvSymbol: "NASDAQ:AAPL", category: "Equities", basePrice: 232.0, tickSize: 0.01, multiplier: 1 },
-  { id: "NVDA", name: "Nvidia Corp.", tvSymbol: "NASDAQ:NVDA", category: "Equities", basePrice: 141.50, tickSize: 0.01, multiplier: 1 },
+export const POPULAR_INSTRUMENTS: InstrumentConfig[] = [
+  // Global & US Instruments
+  { id: "XAUUSD", name: "Gold Spot (XAU/USD)", tvSymbol: "OANDA:XAUUSD", category: "Commodities", basePrice: 2720.50, tickSize: 0.1, multiplier: 100, currency: "USD" },
+  { id: "BTCUSDT", name: "Bitcoin / Tether", tvSymbol: "BINANCE:BTCUSDT", category: "Crypto", basePrice: 80500.0, tickSize: 1.0, multiplier: 1, currency: "USD" },
+  { id: "ETHUSDT", name: "Ethereum / Tether", tvSymbol: "BINANCE:ETHUSDT", category: "Crypto", basePrice: 2850.0, tickSize: 0.5, multiplier: 1, currency: "USD" },
+  { id: "NQ", name: "E-mini Nasdaq 100", tvSymbol: "CME_MINI:NQ1!", category: "Futures", basePrice: 20450.0, tickSize: 0.25, multiplier: 20, currency: "USD" },
+  { id: "ES", name: "E-mini S&P 500", tvSymbol: "CME_MINI:ES1!", category: "Futures", basePrice: 5820.0, tickSize: 0.25, multiplier: 50, currency: "USD" },
+  { id: "EURUSD", name: "Euro / US Dollar", tvSymbol: "FX:EURUSD", category: "Forex", basePrice: 1.0850, tickSize: 0.0001, multiplier: 100000, currency: "USD" },
+  { id: "AAPL", name: "Apple Inc.", tvSymbol: "NASDAQ:AAPL", category: "Equities", basePrice: 232.0, tickSize: 0.01, multiplier: 1, currency: "USD" },
+  { id: "NVDA", name: "Nvidia Corp.", tvSymbol: "NASDAQ:NVDA", category: "Equities", basePrice: 141.50, tickSize: 0.01, multiplier: 1, currency: "USD" },
+  // Indian Market Instruments (NSE/BSE)
+  { id: "NIFTY50", name: "Nifty 50 Index", tvSymbol: "NSE:NIFTY", category: "Indices", basePrice: 24500.0, tickSize: 0.05, multiplier: 1, currency: "INR" },
+  { id: "BANKNIFTY", name: "Bank Nifty Index", tvSymbol: "NSE:BANKNIFTY", category: "Indices", basePrice: 51200.0, tickSize: 0.05, multiplier: 1, currency: "INR" },
+  { id: "RELIANCE", name: "Reliance Industries", tvSymbol: "NSE:RELIANCE", category: "Equities", basePrice: 2850.0, tickSize: 0.05, multiplier: 1, currency: "INR" },
+  { id: "TATASTEEL", name: "Tata Steel Ltd", tvSymbol: "NSE:TATASTEEL", category: "Equities", basePrice: 155.0, tickSize: 0.05, multiplier: 1, currency: "INR" },
 ]
 
 // Generate realistic deterministic session candles with integer Unix timestamps (seconds)
 function generateHistoricalSession(symbolId: string, timeframe: string = "5m", count: number = 100) {
   const inst = POPULAR_INSTRUMENTS.find((i) => i.id === symbolId) || POPULAR_INSTRUMENTS[0]
   const base = inst.basePrice
-  const volatility = symbolId === "BTCUSDT" ? 120 : symbolId === "ETHUSDT" ? 12 : symbolId === "NQ" ? 18 : symbolId === "ES" ? 3.5 : symbolId === "EURUSD" ? 0.0006 : 2.5
+  const volatility =
+    symbolId === "BTCUSDT" ? 120 :
+    symbolId === "ETHUSDT" ? 12 :
+    symbolId === "NQ" ? 18 :
+    symbolId === "ES" ? 3.5 :
+    symbolId === "EURUSD" ? 0.0006 :
+    symbolId === "NIFTY50" ? 25.0 :
+    symbolId === "BANKNIFTY" ? 55.0 :
+    symbolId === "RELIANCE" ? 4.5 :
+    symbolId === "TATASTEEL" ? 0.6 :
+    2.5
   const isForex = symbolId === "EURUSD"
   const candles = []
 
   let current = base
-  // Start from recent timestamp (e.g. 100 bars ago)
+  // Start from recent timestamp (e.g. count bars ago)
   const stepSeconds = timeframe === "1m" ? 60 : timeframe === "5m" ? 300 : timeframe === "15m" ? 900 : timeframe === "60m" || timeframe === "1h" ? 3600 : 300
   const startSec = Math.floor(Date.now() / 1000) - (count * stepSeconds)
 
@@ -100,6 +122,7 @@ interface SimulatedTrade {
   pnl: number
   time: string
   savedToJournal?: boolean
+  currency: string
 }
 
 export default function TradeReplayPage() {
@@ -108,10 +131,10 @@ export default function TradeReplayPage() {
   const [customSymbol, setCustomSymbol] = useState("")
   const [timeframe, setTimeframe] = useState("15")
 
-  // Replay Simulator State
+  // Deterministic Replay Simulator State Machine
+  const [replayState, setReplayState] = useState<ReplayState>("idle")
   const [speed, setSpeed] = useState("1x")
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [currentIndex, setCurrentIndex] = useState(35)
+  const [currentIndex, setCurrentIndex] = useState(30)
   const [lotSize, setLotSize] = useState(1.0)
   const [userAccounts, setUserAccounts] = useState<Account[]>([])
   const [notification, setNotification] = useState<string | null>(null)
@@ -127,26 +150,13 @@ export default function TradeReplayPage() {
   // Backend Candlestick Data Cache
   const [backendCandles, setBackendCandles] = useState<BackendCandle[]>([])
 
+  const instCurrency = selectedInstrument.currency || "USD"
+  const instSymbol = getCurrencySymbol(instCurrency)
+
   // Fetch accounts on load for direct journal saving
   useEffect(() => {
     accountsApi.list().then((accs) => setUserAccounts(accs)).catch(() => {})
   }, [])
-
-  // Fetch real candles from backend when symbol or timeframe changes
-  useEffect(() => {
-    let isMounted = true
-    const cleanSym = selectedInstrument.id
-    const tfParam = timeframe === "1" ? "1m" : timeframe === "5" ? "5m" : timeframe === "15" ? "15m" : timeframe === "60" ? "1h" : "15m"
-    marketDataApi.getCandles(cleanSym, tfParam, 120).then((candles) => {
-      if (isMounted && candles && candles.length > 0) {
-        setBackendCandles(candles)
-      }
-    }).catch(() => {})
-
-    return () => {
-      isMounted = false
-    }
-  }, [selectedInstrument.id, timeframe])
 
   // Full candles for simulator: prioritize backend candles or use deterministic session
   const fullCandles = useMemo(() => {
@@ -160,12 +170,50 @@ export default function TradeReplayPage() {
         volume: c.volume,
       }))
     }
-    return generateHistoricalSession(selectedInstrument.id, timeframe === "5" ? "5m" : "15m", 100)
+    return generateHistoricalSession(selectedInstrument.id, timeframe === "5" ? "5m" : "15m", 120)
   }, [backendCandles, selectedInstrument.id, timeframe])
 
+  const startIndex = useMemo(() => {
+    return Math.min(30, Math.max(10, Math.floor(fullCandles.length / 3)))
+  }, [fullCandles.length])
+
+  // Fetch real candles from backend when symbol or timeframe changes
+  useEffect(() => {
+    let isMounted = true
+    setReplayState("loading")
+    const cleanSym = selectedInstrument.id
+    const tfParam = timeframe === "1" ? "1m" : timeframe === "5" ? "5m" : timeframe === "15" ? "15m" : timeframe === "60" ? "1h" : "15m"
+
+    marketDataApi.getCandles(cleanSym, tfParam, 120)
+      .then((candles) => {
+        if (isMounted) {
+          if (candles && candles.length > 0) {
+            setBackendCandles(candles)
+          } else {
+            setBackendCandles([])
+          }
+          setCurrentIndex(startIndex)
+          setReplayState("ready")
+        }
+      })
+      .catch((err) => {
+        if (isMounted) {
+          console.warn("Using simulated candles fallback for replay:", err)
+          setBackendCandles([])
+          setCurrentIndex(startIndex)
+          setReplayState("ready")
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [selectedInstrument.id, timeframe, startIndex])
+
+  // Prevent look-ahead bias: visible candles strictly up to currentIndex
   const visibleCandles = useMemo(() => {
-    return fullCandles.slice(0, Math.min(currentIndex, fullCandles.length))
-  }, [fullCandles, currentIndex])
+    return fullCandles.slice(0, Math.min(Math.max(currentIndex, startIndex), fullCandles.length))
+  }, [fullCandles, currentIndex, startIndex])
 
   const currentCandle = visibleCandles[visibleCandles.length - 1]
   const currentPrice = currentCandle ? currentCandle.close : selectedInstrument.basePrice
@@ -176,25 +224,64 @@ export default function TradeReplayPage() {
   // Active TV Symbol
   const activeTvSymbol = customSymbol.trim() ? customSymbol.trim().toUpperCase() : selectedInstrument.tvSymbol
 
-  // Playback timer loop
+  // Playback timer loop governed strictly by state machine
   useEffect(() => {
-    if (!isPlaying) return
+    if (replayState !== "playing") return
 
     const speedMs =
-      speed === "0.5x" ? 2000 : speed === "1x" ? 1000 : speed === "2x" ? 500 : speed === "3x" ? 330 : speed === "5x" ? 200 : 100
+      speed === "0.5x" ? 2000 : speed === "1x" ? 1000 : speed === "2x" ? 500 : speed === "3x" ? 333 : speed === "5x" ? 200 : 1000
 
     const timer = setInterval(() => {
       setCurrentIndex((prev) => {
-        if (prev >= fullCandles.length) {
-          setIsPlaying(false)
-          return prev
+        if (prev + 1 >= fullCandles.length) {
+          setReplayState("completed")
+          return fullCandles.length
         }
         return prev + 1
       })
     }, speedMs)
 
     return () => clearInterval(timer)
-  }, [isPlaying, speed, fullCandles.length])
+  }, [replayState, speed, fullCandles.length])
+
+  // State machine control handlers
+  const handlePlay = useCallback(() => {
+    if (replayState === "completed" || currentIndex >= fullCandles.length) {
+      setCurrentIndex(startIndex)
+    }
+    setReplayState("playing")
+  }, [replayState, currentIndex, fullCandles.length, startIndex])
+
+  const handlePause = useCallback(() => {
+    setReplayState("paused")
+  }, [])
+
+  const handleStepForward = useCallback(() => {
+    setCurrentIndex((prev) => {
+      const next = prev + 1
+      if (next >= fullCandles.length) {
+        setReplayState("completed")
+        return fullCandles.length
+      }
+      return next
+    })
+  }, [fullCandles.length])
+
+  const handleStepBackward = useCallback(() => {
+    setCurrentIndex((prev) => {
+      const next = Math.max(startIndex, prev - 1)
+      if (replayState === "completed") {
+        setReplayState("paused")
+      }
+      return next
+    })
+  }, [startIndex, replayState])
+
+  const handleReset = useCallback(() => {
+    setReplayState("ready")
+    setCurrentIndex(startIndex)
+    setActivePosition(null)
+  }, [startIndex])
 
   // Open Paper Trade
   const handleOpenTrade = (direction: "long" | "short") => {
@@ -230,6 +317,7 @@ export default function TradeReplayPage() {
       pnl,
       time: timeStr,
       savedToJournal: false,
+      currency: instCurrency,
     }
 
     setCompletedTrades([newTrade, ...completedTrades])
@@ -249,6 +337,7 @@ export default function TradeReplayPage() {
       const nowIso = new Date().toISOString()
       await tradesApi.create({
         account_id: targetAccount.id,
+        currency: trade.currency || instCurrency,
         symbol: selectedInstrument.id,
         direction: trade.direction,
         entry_time: nowIso,
@@ -291,12 +380,6 @@ export default function TradeReplayPage() {
   const winRate =
     completedTrades.length > 0 ? (winningTrades / completedTrades.length) * 100 : 0
 
-  const handleReset = () => {
-    setIsPlaying(false)
-    setCurrentIndex(35)
-    setActivePosition(null)
-  }
-
   const handleSelectInstrument = (inst: InstrumentConfig) => {
     setSelectedInstrument(inst)
     setCustomSymbol("")
@@ -310,8 +393,8 @@ export default function TradeReplayPage() {
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold text-white tracking-tight">TradingView Terminal & Replay</h1>
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/20">
-              <Sparkles className="h-3 w-3" /> Real Market Integration
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/20 font-mono">
+              <Sparkles className="h-3 w-3" /> Market Replay Engine (Historical & Simulated Data)
             </span>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -365,13 +448,16 @@ export default function TradeReplayPage() {
                 key={inst.id}
                 onClick={() => handleSelectInstrument(inst)}
                 className={cn(
-                  "px-2.5 py-1.5 rounded-md text-xs font-semibold font-mono transition-colors cursor-pointer",
+                  "px-2.5 py-1.5 rounded-md text-xs font-semibold font-mono transition-colors cursor-pointer flex items-center gap-1",
                   isSelected
                     ? "bg-[#2962ff] text-white shadow-sm"
                     : "bg-[#1e222d] text-[#9db2c8] hover:bg-[#2a2e39] hover:text-white"
                 )}
               >
-                {inst.id}
+                <span>{inst.id}</span>
+                {inst.currency === "INR" && (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">₹</span>
+                )}
               </button>
             )
           })}
@@ -429,6 +515,9 @@ export default function TradeReplayPage() {
               <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono">
                 Official TradingView Widget
               </span>
+              <span className="text-[10px] bg-[#1e222d] text-[#9db2c8] px-2 py-0.5 rounded font-mono border border-[#2a2e39]">
+                Currency: {instCurrency} ({instSymbol})
+              </span>
             </div>
             <div className="flex items-center gap-2 text-muted-foreground text-[11px] hidden sm:flex">
               <span>Full Left Drawing Bar • Unsquished Candlestick Height • Real-Time Ticks</span>
@@ -453,7 +542,7 @@ export default function TradeReplayPage() {
                   Live Paper Execution
                 </h3>
                 <p className="text-[11px] text-muted-foreground mb-3">
-                  Execute test trades directly on {selectedInstrument.id} with zero capital risk.
+                  Execute test trades directly on {selectedInstrument.id} with zero capital risk ({instCurrency}).
                 </p>
               </div>
 
@@ -501,7 +590,7 @@ export default function TradeReplayPage() {
                       >
                         {activePosition.direction} {activePosition.quantity} lot
                       </span>
-                      <span className="text-xs text-white">Entry: {activePosition.entryPrice}</span>
+                      <span className="text-xs text-white">Entry: {formatPrice(activePosition.entryPrice, instCurrency)}</span>
                     </div>
                   </div>
                 ) : (
@@ -512,9 +601,9 @@ export default function TradeReplayPage() {
               </div>
 
               <div className="pt-3 border-t border-[#2a2e39]">
-                <span className="text-[10px] uppercase text-[#787b86] block">Floating Unrealized P&L</span>
+                <span className="text-[10px] uppercase text-[#787b86] block">Floating Unrealized P&L ({instCurrency})</span>
                 <p className={cn("text-xl font-bold mt-0.5", pnlColor(unrealizedPnl))}>
-                  {formatPnL(unrealizedPnl)}
+                  {formatPnL(unrealizedPnl, instCurrency)}
                 </p>
               </div>
             </div>
@@ -522,9 +611,9 @@ export default function TradeReplayPage() {
             {/* Session Performance */}
             <div className="rounded-xl border border-[#2a2e39] bg-[#131722] p-4 flex flex-col justify-between font-mono shadow-lg">
               <div>
-                <span className="text-[10px] uppercase text-[#787b86]">Session Realized P&L</span>
+                <span className="text-[10px] uppercase text-[#787b86]">Session Realized P&L ({instCurrency})</span>
                 <p className={cn("text-xl font-bold mt-1", pnlColor(totalRealizedPnl))}>
-                  {formatPnL(totalRealizedPnl)}
+                  {formatPnL(totalRealizedPnl, instCurrency)}
                 </p>
               </div>
 
@@ -556,7 +645,26 @@ export default function TradeReplayPage() {
                 Bar {currentIndex} of {fullCandles.length}
               </span>
               <span className="text-emerald-400 font-semibold">
-                Price: {currentPrice.toFixed(precision)}
+                Price: {formatPrice(currentPrice, instCurrency)}
+              </span>
+
+              {/* State Machine Status Badge */}
+              <span
+                className={cn(
+                  "px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider border",
+                  replayState === "playing"
+                    ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40 animate-pulse"
+                    : replayState === "paused"
+                    ? "bg-amber-500/20 text-amber-400 border-amber-500/40"
+                    : replayState === "completed"
+                    ? "bg-indigo-500/20 text-indigo-400 border-indigo-500/40"
+                    : replayState === "loading"
+                    ? "bg-blue-500/20 text-blue-400 border-blue-500/40"
+                    : "bg-[#1e222d] text-[#9db2c8] border-[#2a2e39]"
+                )}
+              >
+                {replayState === "loading" && <Loader2 className="inline-block h-2.5 w-2.5 mr-1 animate-spin" />}
+                {replayState}
               </span>
             </div>
 
@@ -564,25 +672,27 @@ export default function TradeReplayPage() {
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1 rounded-lg border border-[#2a2e39] bg-[#1e222d] p-1">
                 <button
-                  onClick={() => setCurrentIndex((prev) => Math.max(10, prev - 1))}
-                  className="p-1.5 rounded hover:bg-[#2a2e39] text-[#9db2c8] hover:text-white cursor-pointer transition-colors"
+                  onClick={handleStepBackward}
+                  disabled={currentIndex <= startIndex}
+                  className="p-1.5 rounded hover:bg-[#2a2e39] text-[#9db2c8] hover:text-white cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   title="Step Back 1 Bar"
                 >
                   <SkipBack className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={() => setIsPlaying(!isPlaying)}
+                  onClick={replayState === "playing" ? handlePause : handlePlay}
                   className={cn(
                     "p-1.5 rounded text-white cursor-pointer transition-colors shadow-sm",
-                    isPlaying ? "bg-amber-600 hover:bg-amber-500 animate-pulse" : "bg-[#2962ff] hover:bg-[#1e53e5]"
+                    replayState === "playing" ? "bg-amber-600 hover:bg-amber-500 animate-pulse" : "bg-[#2962ff] hover:bg-[#1e53e5]"
                   )}
-                  title={isPlaying ? "Pause Replay" : "Play Replay"}
+                  title={replayState === "playing" ? "Pause Replay" : "Play Replay"}
                 >
-                  {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                  {replayState === "playing" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
                 </button>
                 <button
-                  onClick={() => setCurrentIndex((prev) => Math.min(fullCandles.length, prev + 1))}
-                  className="p-1.5 rounded hover:bg-[#2a2e39] text-[#9db2c8] hover:text-white cursor-pointer transition-colors"
+                  onClick={handleStepForward}
+                  disabled={currentIndex >= fullCandles.length}
+                  className="p-1.5 rounded hover:bg-[#2a2e39] text-[#9db2c8] hover:text-white cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                   title="Step Forward 1 Bar"
                 >
                   <SkipForward className="h-3.5 w-3.5" />
@@ -624,16 +734,24 @@ export default function TradeReplayPage() {
 
           {/* Timeline Scrubber */}
           <div className="flex items-center gap-3 px-3 py-2 bg-[#131722] rounded-lg border border-[#2a2e39]">
-            <span className="text-[11px] font-mono text-[#787b86]">Session Open</span>
+            <span className="text-[11px] font-mono text-[#787b86]">Session Start (Bar {startIndex})</span>
             <input
               type="range"
-              min={10}
+              min={startIndex}
               max={fullCandles.length}
               value={currentIndex}
-              onChange={(e) => setCurrentIndex(Number(e.target.value))}
+              onChange={(e) => {
+                const next = Number(e.target.value)
+                setCurrentIndex(next)
+                if (next >= fullCandles.length) {
+                  setReplayState("completed")
+                } else if (replayState === "completed") {
+                  setReplayState("paused")
+                }
+              }}
               className="w-full accent-[#2962ff] cursor-pointer h-1.5 bg-[#1e222d] rounded"
             />
-            <span className="text-[11px] font-mono text-[#787b86]">Session End</span>
+            <span className="text-[11px] font-mono text-[#787b86]">End (Bar {fullCandles.length})</span>
           </div>
 
           {/* Simulated Execution & Live Position Panel */}
@@ -663,7 +781,7 @@ export default function TradeReplayPage() {
                   </div>
                 </div>
                 <p className="text-[11px] text-muted-foreground mb-3">
-                  Place instant market orders directly on current candle close ({currentPrice.toFixed(precision)}).
+                  Place instant market orders directly on current candle close ({formatPrice(currentPrice, instCurrency)}).
                 </p>
               </div>
 
@@ -712,7 +830,7 @@ export default function TradeReplayPage() {
                         {activePosition.direction} {activePosition.quantity} lot
                       </span>
                       <span className="text-xs text-white">
-                        Entry: {activePosition.entryPrice.toFixed(precision)}
+                        Entry: {formatPrice(activePosition.entryPrice, instCurrency)}
                       </span>
                     </div>
                   </div>
@@ -724,9 +842,9 @@ export default function TradeReplayPage() {
               </div>
 
               <div className="pt-3 border-t border-[#2a2e39]">
-                <span className="text-[10px] uppercase text-[#787b86] block">Unrealized P&L</span>
+                <span className="text-[10px] uppercase text-[#787b86] block">Unrealized P&L ({instCurrency})</span>
                 <p className={cn("text-xl font-bold mt-0.5", pnlColor(unrealizedPnl))}>
-                  {formatPnL(unrealizedPnl)}
+                  {formatPnL(unrealizedPnl, instCurrency)}
                 </p>
               </div>
             </div>
@@ -734,9 +852,9 @@ export default function TradeReplayPage() {
             {/* Performance Stats */}
             <div className="rounded-xl border border-[#2a2e39] bg-[#131722] p-4 flex flex-col justify-between font-mono shadow-lg">
               <div>
-                <span className="text-[10px] uppercase text-[#787b86]">Session Net Realized P&L</span>
+                <span className="text-[10px] uppercase text-[#787b86]">Session Net Realized P&L ({instCurrency})</span>
                 <p className={cn("text-xl font-bold mt-1", pnlColor(totalRealizedPnl))}>
-                  {formatPnL(totalRealizedPnl)}
+                  {formatPnL(totalRealizedPnl, instCurrency)}
                 </p>
               </div>
 
@@ -799,10 +917,10 @@ export default function TradeReplayPage() {
                           </span>
                         </td>
                         <td className="py-2 px-3 text-white">{trade.quantity}</td>
-                        <td className="py-2 px-3 text-[#9db2c8]">{trade.entryPrice.toFixed(precision)}</td>
-                        <td className="py-2 px-3 text-[#9db2c8]">{trade.exitPrice.toFixed(precision)}</td>
+                        <td className="py-2 px-3 text-[#9db2c8]">{formatPrice(trade.entryPrice, trade.currency)}</td>
+                        <td className="py-2 px-3 text-[#9db2c8]">{formatPrice(trade.exitPrice, trade.currency)}</td>
                         <td className={cn("py-2 px-3 font-bold", pnlColor(trade.pnl))}>
-                          {formatPnL(trade.pnl)}
+                          {formatPnL(trade.pnl, trade.currency)}
                         </td>
                         <td className="py-2 px-3 text-[#787b86]">{trade.time}</td>
                         <td className="py-2 px-3 text-right">

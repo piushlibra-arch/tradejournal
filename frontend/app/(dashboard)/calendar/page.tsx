@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation"
 import { tradesApi, Trade } from "@/lib/api/trades"
 import { journalApi, JournalEntry } from "@/lib/api/journal"
 import { formatPnL, pnlColor, formatCurrency, cn } from "@/lib/utils"
+import { useAccount } from "@/lib/context/account-context"
+import { resolveTradeCurrency, formatPrice } from "@/lib/currency"
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -19,6 +21,7 @@ import {
 
 export default function CalendarPage() {
   const router = useRouter()
+  const { selectedAccountId, accountCurrency } = useAccount()
   const [trades, setTrades] = useState<Trade[]>([])
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([])
   const [currentDate, setCurrentDate] = useState(new Date())
@@ -47,6 +50,7 @@ export default function CalendarPage() {
             start_date: `${startMonthStr}T00:00:00`,
             end_date: `${endMonthStr}T23:59:59`,
             page_size: 500,
+            account_id: selectedAccountId !== "all" ? selectedAccountId : undefined,
           }),
           journalApi.list(startMonthStr, endMonthStr),
         ])
@@ -71,7 +75,7 @@ export default function CalendarPage() {
       }
     }
     loadData()
-  }, [year, month, daysInMonth])
+  }, [year, month, daysInMonth, selectedAccountId])
 
   // Map trades by calendar day: "YYYY-MM-DD"
   const dailyPnLMap: Record<string, { count: number; netPnl: number; trades: Trade[] }> = {}
@@ -153,7 +157,7 @@ export default function CalendarPage() {
         <div className="rounded-lg border border-[#202634] bg-[#11141a] p-3.5">
           <p className="text-[11px] font-medium text-muted-foreground">Month Net P&L</p>
           <p className={cn("mt-1 text-lg font-mono font-bold", pnlColor(monthNetPnl))}>
-            {formatPnL(monthNetPnl)}
+            {formatPnL(monthNetPnl, accountCurrency)}
           </p>
         </div>
 
@@ -252,7 +256,7 @@ export default function CalendarPage() {
                 {data ? (
                   <div className="my-auto text-right w-full">
                     <p className={cn("text-xs font-bold font-mono tracking-tight", pnlColor(data.netPnl))}>
-                      {formatPnL(data.netPnl)}
+                      {formatPnL(data.netPnl, accountCurrency)}
                     </p>
                   </div>
                 ) : (
@@ -295,7 +299,7 @@ export default function CalendarPage() {
                 <div className="rounded-lg border border-[#202634] bg-[#11141a] p-3">
                   <span className="text-[10px] uppercase font-mono text-muted-foreground">Net Realized P&L</span>
                   <p className={cn("text-lg font-mono font-bold mt-1", pnlColor(selectedDayData?.netPnl ?? 0))}>
-                    {formatPnL(selectedDayData?.netPnl ?? 0)}
+                    {formatPnL(selectedDayData?.netPnl ?? 0, accountCurrency)}
                   </p>
                 </div>
 
@@ -368,7 +372,9 @@ export default function CalendarPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {selectedDayData.trades.map((t) => (
+                    {selectedDayData.trades.map((t) => {
+                      const tradeCurr = resolveTradeCurrency(t.currency, t.symbol, accountCurrency)
+                      return (
                       <div
                         key={t.id}
                         className="p-3 rounded-lg border border-[#202634] bg-[#11141a] flex items-center justify-between text-xs font-mono"
@@ -388,18 +394,18 @@ export default function CalendarPage() {
                             </span>
                           </div>
                           <div className="text-[10px] text-muted-foreground mt-0.5">
-                            {t.quantity} @ {t.entry_price} → {t.exit_price ?? "open"}
+                            {t.quantity} @ {formatPrice(t.entry_price, tradeCurr)} → {t.exit_price ? formatPrice(t.exit_price, tradeCurr) : "open"}
                           </div>
                         </div>
 
                         <div className="text-right">
-                          <p className={cn("font-bold", pnlColor(t.net_pnl))}>{formatPnL(t.net_pnl)}</p>
+                          <p className={cn("font-bold", pnlColor(t.net_pnl))}>{formatPnL(t.net_pnl, tradeCurr)}</p>
                           <p className="text-[10px] text-muted-foreground">
                             {t.entry_time ? new Date(t.entry_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "—"}
                           </p>
                         </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 )}
               </div>

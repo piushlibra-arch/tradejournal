@@ -37,6 +37,7 @@ export interface Trade {
   notes: string | null
   import_source: string | null
   external_id: string | null
+  currency?: string | null
   charges_breakdown?: {
     brokerage?: number
     stt?: number
@@ -81,6 +82,7 @@ export interface TradeFilters {
 
 export interface CreateTradePayload {
   account_id: string
+  currency?: string
   symbol: string
   asset_class?: string
   direction: "long" | "short"

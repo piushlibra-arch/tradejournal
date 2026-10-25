@@ -4,6 +4,8 @@ import React, { useState, useEffect } from "react"
 import { riskApi, RiskRule, RiskStatusReport } from "@/lib/api/risk"
 import { accountsApi, Account } from "@/lib/api/accounts"
 import { formatCurrency, cn } from "@/lib/utils"
+import { useAccount } from "@/lib/context/account-context"
+import { getCurrencySymbol } from "@/lib/currency"
 import {
   ShieldAlert,
   ShieldCheck,
@@ -20,6 +22,7 @@ import {
 } from "lucide-react"
 
 export default function RiskManagerPage() {
+  const { selectedAccountId: globalAccountId, accountCurrency } = useAccount()
   const [report, setReport] = useState<RiskStatusReport | null>(null)
   const [rules, setRules] = useState<RiskRule[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -36,9 +39,10 @@ export default function RiskManagerPage() {
   const loadRiskData = async () => {
     setLoading(true)
     try {
+      const activeAccountFilter = globalAccountId && globalAccountId !== "all" ? globalAccountId : undefined
       const [statusRes, rulesRes, accountsRes] = await Promise.all([
-        riskApi.getStatus(),
-        riskApi.listRules(),
+        riskApi.getStatus(activeAccountFilter),
+        riskApi.listRules(activeAccountFilter),
         accountsApi.list(),
       ])
       setReport(statusRes)
@@ -53,7 +57,7 @@ export default function RiskManagerPage() {
 
   useEffect(() => {
     loadRiskData()
-  }, [])
+  }, [globalAccountId])
 
   const handleCreateRule = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -64,7 +68,7 @@ export default function RiskManagerPage() {
         rule_type: ruleType,
         threshold: parseFloat(threshold),
         action,
-        account_id: selectedAccountId || null,
+        account_id: selectedAccountId || (globalAccountId !== "all" ? globalAccountId : null),
         is_active: true,
       })
       setModalOpen(false)
@@ -87,12 +91,14 @@ export default function RiskManagerPage() {
     }
   }
 
+  const curSym = getCurrencySymbol(accountCurrency)
+
   const ruleTypeNames: Record<string, string> = {
-    max_daily_loss: "Max Daily Loss ($)",
+    max_daily_loss: `Max Daily Loss (${curSym})`,
     max_trades_per_day: "Max Trades Per Day",
-    max_loss_per_trade: "Max Loss Per Trade ($)",
+    max_loss_per_trade: `Max Loss Per Trade (${curSym})`,
     max_position_size: "Max Position Size (Contracts/Shares)",
-    max_drawdown: "Max Drawdown Limit ($)",
+    max_drawdown: `Max Drawdown Limit (${curSym})`,
   }
 
   return (
@@ -285,11 +291,11 @@ export default function RiskManagerPage() {
                   onChange={(e) => setRuleType(e.target.value)}
                   className="h-8.5 w-full rounded-md border border-[#202634] bg-[#141821] px-3 text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
                 >
-                  <option value="max_daily_loss">Max Daily Loss ($)</option>
+                  <option value="max_daily_loss">Max Daily Loss ({curSym})</option>
                   <option value="max_trades_per_day">Max Trades Per Day</option>
-                  <option value="max_loss_per_trade">Max Single Trade Loss ($)</option>
+                  <option value="max_loss_per_trade">Max Single Trade Loss ({curSym})</option>
                   <option value="max_position_size">Max Position Size</option>
-                  <option value="max_drawdown">Max Drawdown Limit ($)</option>
+                  <option value="max_drawdown">Max Drawdown Limit ({curSym})</option>
                 </select>
               </div>
 

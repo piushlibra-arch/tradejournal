@@ -2,8 +2,8 @@
 
 import React, { useState, useEffect } from "react"
 import { tradesApi, Trade, CreateTradePayload } from "@/lib/api/trades"
-import { accountsApi, Account } from "@/lib/api/accounts"
-import { formatCurrency, formatPnL, pnlColor, cn } from "@/lib/utils"
+import { useAccount } from "@/lib/context/account-context"
+import { formatCurrency, formatPnL, pnlColor, cn, getCurrencySymbol, resolveTradeCurrency } from "@/lib/utils"
 import { CSVImportWizard } from "@/components/trades/csv-import-wizard"
 import {
   Plus,
@@ -23,8 +23,8 @@ import {
 } from "lucide-react"
 
 export default function TradeJournalPage() {
+  const { accounts, selectedAccountId, selectedAccount, accountCurrency, setSelectedAccountId } = useAccount()
   const [trades, setTrades] = useState<Trade[]>([])
-  const [accounts, setAccounts] = useState<Account[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
@@ -32,7 +32,6 @@ export default function TradeJournalPage() {
   // Filters
   const [symbolFilter, setSymbolFilter] = useState("")
   const [directionFilter, setDirectionFilter] = useState("")
-  const [selectedAccountId, setSelectedAccountId] = useState("")
 
   // Modal states
   const [showNewModal, setShowNewModal] = useState(false)
@@ -44,6 +43,7 @@ export default function TradeJournalPage() {
   // Form State
   const [formData, setFormData] = useState<CreateTradePayload>({
     account_id: "",
+    currency: "USD",
     symbol: "",
     direction: "long",
     entry_time: new Date().toISOString().slice(0, 16),
@@ -61,15 +61,31 @@ export default function TradeJournalPage() {
     status: "closed",
   })
 
+  // Set default account when accounts change
+  useEffect(() => {
+    if (accounts.length > 0) {
+      const activeId = selectedAccountId !== "all" && accounts.some((a) => a.id === selectedAccountId)
+        ? selectedAccountId
+        : accounts[0].id
+      const acc = accounts.find((a) => a.id === activeId)
+      setFormData((prev) => ({
+        ...prev,
+        account_id: activeId,
+        currency: acc?.currency || prev.currency || "USD",
+      }))
+    }
+  }, [accounts, selectedAccountId])
+
   const loadTrades = async () => {
     setLoading(true)
+    const effectiveAccId = !selectedAccountId || selectedAccountId === "all" ? undefined : selectedAccountId
     try {
       const res = await tradesApi.list({
         page,
         page_size: 25,
         symbol: symbolFilter || undefined,
         direction: directionFilter || undefined,
-        account_id: selectedAccountId || undefined,
+        account_id: effectiveAccId,
       })
       setTrades(res.trades)
       setTotal(res.total)
@@ -79,22 +95,6 @@ export default function TradeJournalPage() {
       setLoading(false)
     }
   }
-
-  const loadAccounts = async () => {
-    try {
-      const data = await accountsApi.list()
-      setAccounts(data)
-      if (data.length > 0 && !formData.account_id) {
-        setFormData((prev) => ({ ...prev, account_id: data[0].id }))
-      }
-    } catch (err) {
-      console.error("Failed to load accounts", err)
-    }
-  }
-
-  useEffect(() => {
-    loadAccounts()
-  }, [])
 
   useEffect(() => {
     loadTrades()
@@ -257,7 +257,7 @@ export default function TradeJournalPage() {
           onChange={(e) => setSelectedAccountId(e.target.value)}
           className="h-8 rounded-md border border-[#202634] bg-[#141821] px-3 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
         >
-          <option value="">All Accounts</option>
+          <option value="all">All Accounts</option>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name} ({a.currency})
@@ -265,12 +265,12 @@ export default function TradeJournalPage() {
           ))}
         </select>
 
-        {(symbolFilter || directionFilter || selectedAccountId) && (
+        {(symbolFilter || directionFilter || (selectedAccountId && selectedAccountId !== "all")) && (
           <button
             onClick={() => {
               setSymbolFilter("")
               setDirectionFilter("")
-              setSelectedAccountId("")
+              setSelectedAccountId("all")
             }}
             className="text-xs text-indigo-400 hover:underline cursor-pointer"
           >
@@ -326,6 +326,8 @@ export default function TradeJournalPage() {
                   const net = t.net_pnl !== null ? parseFloat(t.net_pnl) : null
                   const gross = t.gross_pnl !== null ? parseFloat(t.gross_pnl) : null
                   const comm = parseFloat(t.commission || "0") + parseFloat(t.fees || "0")
+                  const tradeCurrency = resolveTradeCurrency(t, accountCurrency)
+                  const sym = getCurrencySymbol(tradeCurrency)
                   return (
                     <tr
                       key={t.id}
@@ -335,7 +337,12 @@ export default function TradeJournalPage() {
                       <td className="py-2.5 px-4 font-mono text-muted-foreground">
                         {new Date(t.entry_time).toLocaleDateString()} {new Date(t.entry_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </td>
-                      <td className="py-2.5 px-4 font-bold text-white font-mono">{t.symbol}</td>
+                      <td className="py-2.5 px-4 font-bold text-white font-mono flex items-center gap-1.5">
+                        {t.symbol}
+                        {tradeCurrency === "INR" && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-sans">INR</span>
+                        )}
+                      </td>
                       <td className="py-2.5 px-4">
                         <span
                           className={cn(
@@ -348,13 +355,13 @@ export default function TradeJournalPage() {
                           {t.direction}
                         </span>
                       </td>
-                      <td className="py-2.5 px-4 font-mono">${t.entry_price}</td>
-                      <td className="py-2.5 px-4 font-mono">{t.exit_price ? `$${t.exit_price}` : "—"}</td>
+                      <td className="py-2.5 px-4 font-mono">{sym}{t.entry_price}</td>
+                      <td className="py-2.5 px-4 font-mono">{t.exit_price ? `${sym}${t.exit_price}` : "—"}</td>
                       <td className="py-2.5 px-4 font-mono">{t.quantity}</td>
-                      <td className="py-2.5 px-4 font-mono">{formatCurrency(gross)}</td>
-                      <td className="py-2.5 px-4 font-mono text-muted-foreground">-${comm.toFixed(2)}</td>
+                      <td className="py-2.5 px-4 font-mono">{formatCurrency(gross, tradeCurrency)}</td>
+                      <td className="py-2.5 px-4 font-mono text-muted-foreground">-{formatCurrency(comm, tradeCurrency)}</td>
                       <td className={cn("py-2.5 px-4 font-mono font-bold", pnlColor(net))}>
-                        {formatPnL(net)}
+                        {formatPnL(net, tradeCurrency)}
                       </td>
                       <td className="py-2.5 px-4 text-muted-foreground truncate max-w-[120px]">
                         {t.setup_name || "—"}
@@ -430,115 +437,126 @@ export default function TradeJournalPage() {
           </div>
 
           <div className="space-y-4 text-xs">
-            {/* PnL Highlights */}
-            <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-[#11141a] border border-[#202634]">
-              <div>
-                <span className="text-[10px] text-muted-foreground font-mono uppercase">Net Realized P&L</span>
-                <p className={cn("text-base font-bold font-mono mt-0.5", pnlColor(selectedTrade.net_pnl))}>
-                  {formatPnL(selectedTrade.net_pnl)}
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] text-muted-foreground font-mono uppercase">Gross P&L</span>
-                <p className="text-base font-bold font-mono text-white mt-0.5">
-                  {formatCurrency(selectedTrade.gross_pnl)}
-                </p>
-              </div>
-            </div>
+            {(() => {
+              const drawerCurrency = resolveTradeCurrency(selectedTrade, accountCurrency)
+              const drawerSym = getCurrencySymbol(drawerCurrency)
+              return (
+                <>
+                  {/* PnL Highlights */}
+                  <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-[#11141a] border border-[#202634]">
+                    <div>
+                      <span className="text-[10px] text-muted-foreground font-mono uppercase">Net Realized P&L</span>
+                      <p className={cn("text-base font-bold font-mono mt-0.5", pnlColor(selectedTrade.net_pnl))}>
+                        {formatPnL(selectedTrade.net_pnl, drawerCurrency)}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-muted-foreground font-mono uppercase">Gross P&L</span>
+                      <p className="text-base font-bold font-mono text-white mt-0.5">
+                        {formatCurrency(selectedTrade.gross_pnl, drawerCurrency)}
+                      </p>
+                    </div>
+                  </div>
 
-            {/* Execution Stats */}
-            <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 space-y-2.5">
-              <h3 className="text-xs font-semibold text-white border-b border-[#202634] pb-1.5">Execution Details</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-muted-foreground">Entry Price:</span>
-                  <span className="font-mono text-white ml-1.5">{selectedTrade.import_source === "dhan" ? "₹" : "$"}{selectedTrade.entry_price}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Exit Price:</span>
-                  <span className="font-mono text-white ml-1.5">{selectedTrade.exit_price ? `${selectedTrade.import_source === "dhan" ? "₹" : "$"}${selectedTrade.exit_price}` : "Open"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Quantity:</span>
-                  <span className="font-mono text-white ml-1.5">{selectedTrade.quantity}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Contract Size:</span>
-                  <span className="font-mono text-white ml-1.5">{selectedTrade.contract_size}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Commission:</span>
-                  <span className="font-mono text-white ml-1.5">{selectedTrade.import_source === "dhan" ? "₹" : "$"}{selectedTrade.commission}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Fees:</span>
-                  <span className="font-mono text-white ml-1.5">{selectedTrade.import_source === "dhan" ? "₹" : "$"}{selectedTrade.fees}</span>
-                </div>
-              </div>
-            </div>
+                  {/* Execution Stats */}
+                  <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 space-y-2.5">
+                    <h3 className="text-xs font-semibold text-white border-b border-[#202634] pb-1.5 flex items-center justify-between">
+                      <span>Execution Details</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#1c222e] text-indigo-400 font-mono font-medium">{drawerCurrency}</span>
+                    </h3>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-muted-foreground">Entry Price:</span>
+                        <span className="font-mono text-white ml-1.5">{drawerSym}{selectedTrade.entry_price}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Exit Price:</span>
+                        <span className="font-mono text-white ml-1.5">{selectedTrade.exit_price ? `${drawerSym}${selectedTrade.exit_price}` : "Open"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Quantity:</span>
+                        <span className="font-mono text-white ml-1.5">{selectedTrade.quantity}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Contract Size:</span>
+                        <span className="font-mono text-white ml-1.5">{selectedTrade.contract_size}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Commission:</span>
+                        <span className="font-mono text-white ml-1.5">{formatCurrency(selectedTrade.commission, drawerCurrency)}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Fees:</span>
+                        <span className="font-mono text-white ml-1.5">{formatCurrency(selectedTrade.fees, drawerCurrency)}</span>
+                      </div>
+                    </div>
+                  </div>
 
-            {/* Itemized Charges & Taxes */}
-            {selectedTrade.charges_breakdown && (
-              <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 space-y-2.5">
-                <div className="flex items-center justify-between border-b border-[#202634] pb-1.5">
-                  <h3 className="text-xs font-semibold text-white">Itemized Broker Charges & Taxes</h3>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono">
-                    {selectedTrade.charges_breakdown.provenance || "broker_reported"}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-                  <div>
-                    <span className="text-muted-foreground">Brokerage:</span>
-                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.brokerage || 0).toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">STT / CTT:</span>
-                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.stt || 0).toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Exchange Turnover:</span>
-                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.exchange_turnover || 0).toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">GST (18%):</span>
-                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.gst || 0).toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Stamp Duty:</span>
-                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.stamp_duty || 0).toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">SEBI Turnover:</span>
-                    <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.sebi_turnover || 0).toFixed(2)}</span>
-                  </div>
-                  <div className="col-span-2 pt-1 border-t border-[#1e2330] flex justify-between font-bold text-xs">
-                    <span className="text-muted-foreground">Total Deducted Charges:</span>
-                    <span className="text-rose-400">
-                      -₹{(selectedTrade.charges_breakdown.total_charges || (parseFloat(selectedTrade.commission) + parseFloat(selectedTrade.fees))).toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
+                  {/* Itemized Charges & Taxes */}
+                  {selectedTrade.charges_breakdown && (
+                    <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 space-y-2.5">
+                      <div className="flex items-center justify-between border-b border-[#202634] pb-1.5">
+                        <h3 className="text-xs font-semibold text-white">Itemized Broker Charges & Taxes</h3>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono">
+                          {selectedTrade.charges_breakdown.provenance || "broker_reported"}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+                        <div>
+                          <span className="text-muted-foreground">Brokerage:</span>
+                          <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.brokerage || 0).toFixed(2)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">STT / CTT:</span>
+                          <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.stt || 0).toFixed(2)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Exchange Turnover:</span>
+                          <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.exchange_turnover || 0).toFixed(2)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">GST (18%):</span>
+                          <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.gst || 0).toFixed(2)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Stamp Duty:</span>
+                          <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.stamp_duty || 0).toFixed(2)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">SEBI Turnover:</span>
+                          <span className="text-white ml-1.5 font-semibold">₹{(selectedTrade.charges_breakdown.sebi_turnover || 0).toFixed(2)}</span>
+                        </div>
+                        <div className="col-span-2 pt-1 border-t border-[#1e2330] flex justify-between font-bold text-xs">
+                          <span className="text-muted-foreground">Total Deducted Charges:</span>
+                          <span className="text-rose-400">
+                            -₹{(selectedTrade.charges_breakdown.total_charges || (parseFloat(selectedTrade.commission) + parseFloat(selectedTrade.fees))).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-            {/* Risk Levels */}
-            <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 space-y-2.5">
-              <h3 className="text-xs font-semibold text-white border-b border-[#202634] pb-1.5">Risk & Strategy</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <span className="text-muted-foreground">Stop Loss:</span>
-                  <span className="font-mono text-rose-400 ml-1.5">{selectedTrade.stop_loss_price ? `$${selectedTrade.stop_loss_price}` : "Not set"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Take Profit:</span>
-                  <span className="font-mono text-emerald-400 ml-1.5">{selectedTrade.take_profit_price ? `$${selectedTrade.take_profit_price}` : "Not set"}</span>
-                </div>
-                <div className="col-span-2">
-                  <span className="text-muted-foreground">Setup:</span>
-                  <span className="text-white ml-1.5">{selectedTrade.setup_name || "Discretionary"}</span>
-                </div>
-              </div>
-            </div>
+                  {/* Risk Levels */}
+                  <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 space-y-2.5">
+                    <h3 className="text-xs font-semibold text-white border-b border-[#202634] pb-1.5">Risk & Strategy</h3>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-muted-foreground">Stop Loss:</span>
+                        <span className="font-mono text-rose-400 ml-1.5">{selectedTrade.stop_loss_price ? `${drawerSym}${selectedTrade.stop_loss_price}` : "Not set"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Take Profit:</span>
+                        <span className="font-mono text-emerald-400 ml-1.5">{selectedTrade.take_profit_price ? `${drawerSym}${selectedTrade.take_profit_price}` : "Not set"}</span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground">Setup:</span>
+                        <span className="text-white ml-1.5">{selectedTrade.setup_name || "Discretionary"}</span>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )
+            })()}
 
             {/* Notes */}
             {selectedTrade.notes && (
@@ -585,22 +603,45 @@ export default function TradeJournalPage() {
             )}
 
             <form onSubmit={handleCreateTrade} className="space-y-4 text-xs">
-              {/* Account Selection */}
-              <div>
-                <label className="block text-foreground font-medium mb-1.5">Trading Account</label>
-                <select
-                  required
-                  value={formData.account_id}
-                  onChange={(e) => setFormData({ ...formData, account_id: e.target.value })}
-                  className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
-                >
-                  <option value="">Select Account</option>
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} ({a.currency}) - {a.account_type}
-                    </option>
-                  ))}
-                </select>
+              {/* Account & Currency Selection */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-foreground font-medium mb-1.5">Trading Account</label>
+                  <select
+                    required
+                    value={formData.account_id}
+                    onChange={(e) => {
+                      const accId = e.target.value
+                      const acc = accounts.find((a) => a.id === accId)
+                      setFormData({
+                        ...formData,
+                        account_id: accId,
+                        currency: acc?.currency || formData.currency || "USD",
+                      })
+                    }}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="">Select Account</option>
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.currency}) - {a.account_type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Currency</label>
+                  <select
+                    value={formData.currency || "USD"}
+                    onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="USD">USD ($)</option>
+                    <option value="INR">INR (₹)</option>
+                    <option value="EUR">EUR (€)</option>
+                    <option value="GBP">GBP (£)</option>
+                  </select>
+                </div>
               </div>
 
               {/* Instrument & Side */}
@@ -707,7 +748,7 @@ export default function TradeJournalPage() {
               {/* Fees and SL/TP */}
               <div className="grid grid-cols-4 gap-2">
                 <div>
-                  <label className="block text-muted-foreground text-[11px] mb-1">Commission ($)</label>
+                  <label className="block text-muted-foreground text-[11px] mb-1">Commission ({getCurrencySymbol(formData.currency || "USD")})</label>
                   <input
                     type="number"
                     step="any"
@@ -717,7 +758,7 @@ export default function TradeJournalPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-muted-foreground text-[11px] mb-1">Fees ($)</label>
+                  <label className="block text-muted-foreground text-[11px] mb-1">Fees ({getCurrencySymbol(formData.currency || "USD")})</label>
                   <input
                     type="number"
                     step="any"
@@ -727,7 +768,7 @@ export default function TradeJournalPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-muted-foreground text-[11px] mb-1">Stop Loss ($)</label>
+                  <label className="block text-muted-foreground text-[11px] mb-1">Stop Loss ({getCurrencySymbol(formData.currency || "USD")})</label>
                   <input
                     type="number"
                     step="any"
@@ -738,7 +779,7 @@ export default function TradeJournalPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-muted-foreground text-[11px] mb-1">Take Profit ($)</label>
+                  <label className="block text-muted-foreground text-[11px] mb-1">Take Profit ({getCurrencySymbol(formData.currency || "USD")})</label>
                   <input
                     type="number"
                     step="any"

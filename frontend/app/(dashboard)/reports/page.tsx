@@ -63,6 +63,7 @@ export default function ReportsPage() {
       const headers = [
         "Trade ID",
         "Symbol",
+        "Currency",
         "Direction",
         "Entry Time",
         "Exit Time",
@@ -78,6 +79,7 @@ export default function ReportsPage() {
       const rows = res.trades.map((t) => [
         t.id,
         t.symbol,
+        t.currency || "USD",
         t.direction,
         t.entry_time,
         t.exit_time || "",

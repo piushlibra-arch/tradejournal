@@ -3,6 +3,7 @@
 import React, { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth/auth-context"
+import { AccountProvider } from "@/lib/context/account-context"
 import { Sidebar } from "@/components/layout/sidebar"
 import { TopBar } from "@/components/layout/topbar"
 import { Loader2 } from "lucide-react"
@@ -33,15 +34,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="min-h-screen bg-[#090a0d] text-foreground flex">
-      {/* Sidebar */}
-      <Sidebar />
+    <AccountProvider>
+      <div className="min-h-screen bg-[#090a0d] text-foreground flex">
+        {/* Sidebar */}
+        <Sidebar />
 
-      {/* Main Container */}
-      <div className="flex-1 ml-60 min-h-screen flex flex-col transition-all duration-200">
-        <TopBar />
-        <main className="flex-1 p-6 max-w-7xl w-full mx-auto">{children}</main>
+        {/* Main Container */}
+        <div className="flex-1 ml-60 min-h-screen flex flex-col transition-all duration-200">
+          <TopBar />
+          <main className="flex-1 p-6 max-w-7xl w-full mx-auto">{children}</main>
+        </div>
       </div>
-    </div>
+    </AccountProvider>
   )
 }

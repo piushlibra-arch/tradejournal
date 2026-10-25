@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError
 from app.models.strategy import Strategy
 from app.models.trade import Trade
+from app.models.trading_account import TradingAccount
 from app.schemas.strategy import StrategyCreate, StrategyPerformance, StrategyUpdate
 
 
@@ -105,16 +106,27 @@ class StrategyService:
         db: AsyncSession,
         user_id: uuid.UUID,
         strategy_id: uuid.UUID,
+        account_id: Optional[uuid.UUID] = None,
     ) -> StrategyPerformance:
         strategy = await StrategyService.get_strategy(db, user_id, strategy_id)
 
         # Get all trades linked to this strategy
-        stmt = select(Trade).where(
-            and_(
-                Trade.strategy_id == strategy_id,
-                Trade.user_id == user_id,
+        trade_filters = [
+            Trade.strategy_id == strategy_id,
+            Trade.user_id == user_id,
+        ]
+        if account_id:
+            acc_check = await db.execute(
+                select(TradingAccount.id).where(
+                    TradingAccount.id == account_id,
+                    TradingAccount.user_id == user_id,
+                )
             )
-        )
+            if not acc_check.scalar_one_or_none():
+                raise NotFoundError("Trading account not found or access denied")
+            trade_filters.append(Trade.account_id == account_id)
+
+        stmt = select(Trade).where(and_(*trade_filters))
         res = await db.execute(stmt)
         trades = list(res.scalars().all())
 

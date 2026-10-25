@@ -7,9 +7,11 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.currency import calculate_trade_pnl, resolve_instrument_currency
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.models.tag import TradeTag
 from app.models.trade import Trade
+from app.models.trading_account import TradingAccount
 from app.schemas.trade import TradeCreate, TradeUpdate
 
 
@@ -18,26 +20,22 @@ class TradeService:
         self.db = db
 
     def _calculate_pnl(self, trade_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate P&L if not explicitly provided."""
-        direction = trade_data.get("direction")
-        entry_price = trade_data.get("entry_price")
-        exit_price = trade_data.get("exit_price")
-        quantity = trade_data.get("quantity")
-        contract_size = trade_data.get("contract_size", Decimal("1")) or Decimal("1")
-        commission = trade_data.get("commission", Decimal("0")) or Decimal("0")
-        fees = trade_data.get("fees", Decimal("0")) or Decimal("0")
-        swap = trade_data.get("swap", Decimal("0")) or Decimal("0")
-
-        if exit_price is not None and entry_price is not None and quantity is not None:
-            if trade_data.get("gross_pnl") is None:
-                if str(direction).lower() == "long":
-                    gross_pnl = (exit_price - entry_price) * quantity * contract_size
-                else:
-                    gross_pnl = (entry_price - exit_price) * quantity * contract_size
-                trade_data["gross_pnl"] = gross_pnl
-
-            if trade_data.get("net_pnl") is None and trade_data.get("gross_pnl") is not None:
-                trade_data["net_pnl"] = trade_data["gross_pnl"] - commission - fees - swap
+        """Calculate P&L if not explicitly provided using centralized decimal calculator."""
+        gross_pnl, net_pnl = calculate_trade_pnl(
+            direction=trade_data.get("direction"),
+            entry_price=trade_data.get("entry_price"),
+            exit_price=trade_data.get("exit_price"),
+            quantity=trade_data.get("quantity"),
+            contract_size=trade_data.get("contract_size", Decimal("1")) or Decimal("1"),
+            commission=trade_data.get("commission", Decimal("0")) or Decimal("0"),
+            fees=trade_data.get("fees", Decimal("0")) or Decimal("0"),
+            swap=trade_data.get("swap", Decimal("0")) or Decimal("0"),
+            asset_class=trade_data.get("asset_class"),
+        )
+        if trade_data.get("gross_pnl") is None and gross_pnl is not None:
+            trade_data["gross_pnl"] = gross_pnl
+        if trade_data.get("net_pnl") is None and net_pnl is not None:
+            trade_data["net_pnl"] = net_pnl
 
         return trade_data
 
@@ -49,6 +47,23 @@ class TradeService:
             trade_dict["account_id"] = uuid.UUID(trade_dict["account_id"])
         except ValueError:
             raise BadRequestError("Invalid account_id format")
+
+        # Validate account ownership & retrieve account currency
+        acc_stmt = select(TradingAccount).where(
+            TradingAccount.id == trade_dict["account_id"],
+            TradingAccount.user_id == user_id,
+        )
+        acc_res = await self.db.execute(acc_stmt)
+        account = acc_res.scalar_one_or_none()
+        if not account:
+            raise NotFoundError("Trading account not found or access denied")
+
+        if not trade_dict.get("currency"):
+            trade_dict["currency"] = resolve_instrument_currency(
+                symbol=trade_dict["symbol"],
+                asset_class=trade_dict.get("asset_class"),
+                account_currency=account.currency,
+            )
 
         if trade_dict.get("strategy_id"):
             try:
@@ -105,6 +120,14 @@ class TradeService:
 
         filters = []
         if account_id:
+            acc_check = await self.db.execute(
+                select(TradingAccount.id).where(
+                    TradingAccount.id == account_id,
+                    TradingAccount.user_id == user_id,
+                )
+            )
+            if not acc_check.scalar_one_or_none():
+                raise NotFoundError("Trading account not found or access denied")
             filters.append(Trade.account_id == account_id)
         if symbol:
             filters.append(Trade.symbol.ilike(f"%{symbol}%"))
