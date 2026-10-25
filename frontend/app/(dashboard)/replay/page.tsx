@@ -308,21 +308,120 @@ export default function TradeReplayPage() {
             <div className="flex items-center gap-2">
               <span className="font-bold text-white font-mono text-sm">{activeTvSymbol}</span>
               <span className="text-muted-foreground">({selectedInstrument.name})</span>
-              <span className="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded font-mono">
-                {timeframe === "D" ? "Daily" : `${timeframe}m`} Timeframe
+              <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono">
+                Live TradingView Terminal
               </span>
             </div>
-            <div className="flex items-center gap-2 text-muted-foreground text-[11px]">
-              <span>Real-time market streaming • Interactive drawing tools • Technical indicators</span>
+            <div className="flex items-center gap-2 text-muted-foreground text-[11px] hidden sm:flex">
+              <span>Full Left Drawing Toolbar • Live Ticks • Multiple Indicators & Layouts</span>
             </div>
           </div>
 
-          {/* Embedded TradingView Live Chart */}
+          {/* Embedded TradingView Live Terminal with Drawing Tools & Date Ranges */}
           <TradingViewAdvancedChart
             symbol={activeTvSymbol}
             interval={timeframe}
-            height={620}
+            height={740}
           />
+
+          {/* Real-time Paper Trading Simulator Bar */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+            {/* Quick Order Entry */}
+            <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 flex flex-col justify-between">
+              <div>
+                <h3 className="text-xs font-semibold text-white uppercase tracking-wider mb-1">
+                  Live Paper Execution
+                </h3>
+                <p className="text-[11px] text-muted-foreground mb-3">
+                  Simulate live market orders on {selectedInstrument.id} with real tick tracking.
+                </p>
+              </div>
+
+              <div>
+                {!activePosition ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => handleOpenTrade("long")}
+                      className="w-full py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white font-mono cursor-pointer transition-colors shadow-sm"
+                    >
+                      BUY LONG @ {currentPrice}
+                    </button>
+                    <button
+                      onClick={() => handleOpenTrade("short")}
+                      className="w-full py-2.5 rounded-md bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white font-mono cursor-pointer transition-colors shadow-sm"
+                    >
+                      SELL SHORT @ {currentPrice}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleCloseTrade}
+                    className="w-full py-2.5 rounded-md bg-amber-600 hover:bg-amber-500 text-xs font-bold text-white font-mono cursor-pointer transition-colors shadow-sm"
+                  >
+                    FLATTEN POSITION (CLOSE TRADE)
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Position Monitor */}
+            <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 flex flex-col justify-between font-mono">
+              <div>
+                <span className="text-[10px] uppercase text-muted-foreground">Active Position</span>
+                {activePosition ? (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
+                          activePosition.direction === "long"
+                            ? "bg-emerald-500/20 text-emerald-400"
+                            : "bg-rose-500/20 text-rose-400"
+                        )}
+                      >
+                        {activePosition.direction} 1 lot
+                      </span>
+                      <span className="text-xs text-white">Entry: {activePosition.entryPrice}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-muted-foreground font-sans">
+                    No active position. Use Buy/Sell to test your trading setup live.
+                  </p>
+                )}
+              </div>
+
+              <div className="pt-3 border-t border-[#202634]">
+                <span className="text-[10px] uppercase text-muted-foreground block">Floating Unrealized P&L</span>
+                <p className={cn("text-xl font-bold mt-0.5", pnlColor(unrealizedPnl))}>
+                  {formatPnL(unrealizedPnl)}
+                </p>
+              </div>
+            </div>
+
+            {/* Session Performance */}
+            <div className="rounded-lg border border-[#202634] bg-[#11141a] p-4 flex flex-col justify-between font-mono">
+              <div>
+                <span className="text-[10px] uppercase text-muted-foreground">Session Realized P&L</span>
+                <p className={cn("text-xl font-bold mt-1", pnlColor(totalRealizedPnl))}>
+                  {formatPnL(totalRealizedPnl)}
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-[#202634] grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-[10px] text-muted-foreground uppercase block">Trades</span>
+                  <span className="font-bold text-white">{completedTrades.length}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-muted-foreground uppercase block">Win Rate</span>
+                  <span className="font-bold text-white">
+                    {completedTrades.length > 0 ? `${winRate.toFixed(1)}%` : "—"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       ) : (
         /* BAR-BY-BAR REPLAY & PAPER TRADING VIEW */

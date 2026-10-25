@@ -13,7 +13,7 @@ function TradingViewAdvancedChart({
   symbol = "BINANCE:BTCUSDT",
   interval = "15",
   theme = "dark",
-  height = 540,
+  height = 720,
 }: TradingViewAdvancedChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -44,16 +44,24 @@ function TradingViewAdvancedChart({
       locale: "en",
       enable_publishing: false,
       allow_symbol_change: true,
+      hide_side_toolbar: false, // Left-hand drawing toolbar with trendlines, Fibs, brushes
+      withdateranges: true, // Bottom date ranges (1D, 5D, 1M, YTD, 1Y, ALL)
+      details: true, // Real-time quote & market details
+      hotlist: false,
       calendar: false,
+      show_popup_button: true,
+      popup_width: "1200",
+      popup_height: "800",
       support_host: "https://www.tradingview.com",
       hide_top_toolbar: false,
       hide_legend: false,
       save_image: true,
-      backgroundColor: "rgba(17, 20, 26, 1)",
+      backgroundColor: "rgba(11, 14, 20, 1)",
       gridColor: "rgba(32, 38, 52, 0.4)",
       studies: [
         "STD;EMA",
         "STD;RSI",
+        "STD;MACD",
       ],
       disabled_features: ["header_saveload"],
       enabled_features: ["study_templates", "use_localstorage_for_settings"],
