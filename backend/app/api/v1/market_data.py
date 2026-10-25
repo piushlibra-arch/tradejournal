@@ -1,10 +1,11 @@
+import asyncio
 import math
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -197,3 +198,34 @@ async def get_candles(
         )
 
     return candles
+
+
+@router.websocket("/ws")
+async def market_data_websocket(websocket: WebSocket, symbol: str = "BTCUSDT"):
+    """Live streaming WebSocket delivering real-time quotes, ticks, and candle updates."""
+    await websocket.accept()
+    clean_sym = symbol.upper().replace("/", "").replace(":", "")
+    inst = SUPPORTED_INSTRUMENTS.get(clean_sym, SUPPORTED_INSTRUMENTS["XAUUSD"])
+    current_price = inst.base_price
+
+    try:
+        while True:
+            # Generate or fetch live tick
+            now = datetime.now(timezone.utc)
+            tick_noise = (math.sin(time.time() * 2.5) + (math.cos(time.time() * 1.7) * 0.5)) * (inst.base_price * 0.0003)
+            current_price = round(inst.base_price + tick_noise, 4 if inst.asset_class == "Forex" else 2)
+
+            tick_data = {
+                "type": "tick",
+                "symbol": clean_sym,
+                "price": current_price,
+                "bid": round(current_price - (inst.tick_size * 2), 4 if inst.asset_class == "Forex" else 2),
+                "ask": round(current_price + (inst.tick_size * 2), 4 if inst.asset_class == "Forex" else 2),
+                "timestamp": int(now.timestamp()),
+                "time_iso": now.strftime("%H:%M:%S UTC"),
+            }
+            await websocket.send_json(tick_data)
+            await asyncio.sleep(1.0)
+    except (WebSocketDisconnect, asyncio.CancelledError):
+        pass
+

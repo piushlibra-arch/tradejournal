@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react"
 import { accountsApi, Account, CreateAccountPayload } from "@/lib/api/accounts"
 import { formatCurrency, cn } from "@/lib/utils"
+import { DhanBrokerCard } from "@/components/brokers/dhan-broker-card"
 import {
   Wallet,
   Plus,
@@ -102,6 +103,9 @@ export default function AccountsPage() {
           <Plus className="h-3.5 w-3.5" /> Add Trading Account
         </button>
       </div>
+
+      {/* Direct Broker Integrations (DhanHQ API v2) */}
+      <DhanBrokerCard onSyncSuccess={loadAccounts} />
 
       {/* Account Cards Grid */}
       {loading ? (

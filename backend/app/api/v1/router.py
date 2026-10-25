@@ -6,10 +6,12 @@ from app.api.v1 import (
     assistant,
     auth,
     backtest,
+    brokers,
     dashboard,
     imports,
     journal,
     market_data,
+    notifications,
     risk,
     strategies,
     trades,
@@ -28,3 +30,5 @@ api_router.include_router(risk.router, prefix="", tags=["Risk Manager"])
 api_router.include_router(backtest.router, prefix="", tags=["Backtesting Engine"])
 api_router.include_router(assistant.router, prefix="", tags=["AI Trading Assistant"])
 api_router.include_router(market_data.router, prefix="/market-data", tags=["Market Data & Real-Time Charts"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
+api_router.include_router(brokers.router, prefix="/brokers", tags=["Brokers & Dhan Integration"])
