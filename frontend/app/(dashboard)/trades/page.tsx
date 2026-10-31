@@ -40,6 +40,94 @@ export default function TradeJournalPage() {
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
+  // Edit Modal State
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingTrade, setEditingTrade] = useState<Trade | null>(null)
+  const [editFormData, setEditFormData] = useState<CreateTradePayload>({
+    account_id: "",
+    currency: "USD",
+    symbol: "",
+    direction: "long",
+    entry_time: new Date().toISOString().slice(0, 16),
+    exit_time: new Date().toISOString().slice(0, 16),
+    entry_price: "",
+    exit_price: "",
+    quantity: "1",
+    contract_size: "1",
+    commission: "0",
+    fees: "0",
+    stop_loss_price: "",
+    take_profit_price: "",
+    setup_name: "",
+    notes: "",
+    status: "closed",
+  })
+  const [editSubmitting, setEditSubmitting] = useState(false)
+  const [editFormError, setEditFormError] = useState<string | null>(null)
+
+  const handleOpenEdit = (trade: Trade) => {
+    setEditingTrade(trade)
+    setEditFormError(null)
+    setEditFormData({
+      account_id: trade.account_id,
+      currency: trade.currency || "USD",
+      symbol: trade.symbol,
+      direction: trade.direction,
+      entry_time: trade.entry_time ? trade.entry_time.slice(0, 16) : new Date().toISOString().slice(0, 16),
+      exit_time: trade.exit_time ? trade.exit_time.slice(0, 16) : "",
+      entry_price: String(trade.entry_price || ""),
+      exit_price: trade.exit_price !== null && trade.exit_price !== undefined ? String(trade.exit_price) : "",
+      quantity: String(trade.quantity || "1"),
+      contract_size: String(trade.contract_size || "1"),
+      commission: String(trade.commission || "0"),
+      fees: String(trade.fees || "0"),
+      stop_loss_price: trade.stop_loss_price ? String(trade.stop_loss_price) : "",
+      take_profit_price: trade.take_profit_price ? String(trade.take_profit_price) : "",
+      setup_name: trade.setup_name || "",
+      notes: trade.notes || "",
+      status: trade.status || "closed",
+    })
+    setShowEditModal(true)
+  }
+
+  const handleUpdateTrade = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingTrade) return
+    setEditFormError(null)
+
+    if (!editFormData.symbol.trim()) {
+      setEditFormError("Symbol is required.")
+      return
+    }
+    if (!editFormData.entry_price || parseFloat(editFormData.entry_price) <= 0) {
+      setEditFormError("Valid entry price is required.")
+      return
+    }
+    if (!editFormData.quantity || parseFloat(editFormData.quantity) <= 0) {
+      setEditFormError("Valid quantity is required.")
+      return
+    }
+
+    setEditSubmitting(true)
+    try {
+      const updated = await tradesApi.update(editingTrade.id, {
+        ...editFormData,
+        entry_time: new Date(editFormData.entry_time).toISOString(),
+        exit_time: editFormData.exit_time ? new Date(editFormData.exit_time).toISOString() : undefined,
+      })
+      if (selectedTrade?.id === editingTrade.id) {
+        setSelectedTrade(updated)
+      }
+      setShowEditModal(false)
+      setEditingTrade(null)
+      loadTrades()
+    } catch (err: any) {
+      setEditFormError(err?.response?.data?.detail || "Failed to update trade.")
+    } finally {
+      setEditSubmitting(false)
+    }
+  }
+
   // Form State
   const [formData, setFormData] = useState<CreateTradePayload>({
     account_id: "",
@@ -367,13 +455,22 @@ export default function TradeJournalPage() {
                         {t.setup_name || "—"}
                       </td>
                       <td className="py-2.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => handleDeleteTrade(t.id)}
-                          className="p-1 rounded text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                          title="Delete trade"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => handleOpenEdit(t)}
+                            className="p-1 rounded text-muted-foreground hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors cursor-pointer"
+                            title="Edit trade"
+                          >
+                            <Edit className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTrade(t.id)}
+                            className="p-1 rounded text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                            title="Delete trade"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -567,7 +664,13 @@ export default function TradeJournalPage() {
             )}
 
             {/* Actions */}
-            <div className="pt-4 border-t border-[#202634] flex justify-end">
+            <div className="pt-4 border-t border-[#202634] flex items-center justify-end gap-2">
+              <button
+                onClick={() => handleOpenEdit(selectedTrade)}
+                className="flex items-center gap-1.5 rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs text-indigo-400 hover:bg-indigo-500/20 cursor-pointer font-medium"
+              >
+                <Edit className="h-3.5 w-3.5" /> Edit Position
+              </button>
               <button
                 onClick={() => handleDeleteTrade(selectedTrade.id)}
                 className="flex items-center gap-1.5 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-400 hover:bg-rose-500/20 cursor-pointer font-medium"
@@ -835,6 +938,286 @@ export default function TradeJournalPage() {
           </div>
         </div>
       )}
+      {/* Edit Trade Modal */}
+      {showEditModal && editingTrade && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-xl rounded-xl border border-[#202634] bg-[#11141a] p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[#202634] pb-4 mb-4">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Edit className="h-4 w-4 text-indigo-400" />
+                  Edit Trade Position — {editingTrade.symbol}
+                </h2>
+                <p className="text-xs text-muted-foreground">Modify execution, risk levels, and journal notes</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowEditModal(false)
+                  setEditingTrade(null)
+                }}
+                className="rounded-md p-1.5 text-muted-foreground hover:bg-[#141821] hover:text-white cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {editFormError && (
+              <div className="mb-4 rounded-md border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-400">
+                {editFormError}
+              </div>
+            )}
+
+            <form onSubmit={handleUpdateTrade} className="space-y-4 text-xs">
+              {/* Account & Currency */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-foreground font-medium mb-1.5">Trading Account</label>
+                  <select
+                    required
+                    value={editFormData.account_id}
+                    onChange={(e) => {
+                      const accId = e.target.value
+                      const acc = accounts.find((a) => a.id === accId)
+                      setEditFormData({
+                        ...editFormData,
+                        account_id: accId,
+                        currency: acc?.currency || editFormData.currency || "USD",
+                      })
+                    }}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.currency}) - {a.account_type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Currency</label>
+                  <select
+                    value={editFormData.currency || "USD"}
+                    onChange={(e) => setEditFormData({ ...editFormData, currency: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="INR">INR (₹)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="EUR">EUR (€)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="JPY">JPY (¥)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Symbol & Direction */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-foreground font-medium mb-1.5">Symbol / Ticker</label>
+                  <input
+                    type="text"
+                    required
+                    value={editFormData.symbol}
+                    onChange={(e) => setEditFormData({ ...editFormData, symbol: e.target.value.toUpperCase() })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Direction</label>
+                  <select
+                    value={editFormData.direction}
+                    onChange={(e) => setEditFormData({ ...editFormData, direction: e.target.value as "long" | "short" })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-medium text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="long">LONG (Buy)</option>
+                    <option value="short">SHORT (Sell)</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Entry / Exit Dates */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Entry Date & Time</label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={editFormData.entry_time}
+                    onChange={(e) => setEditFormData({ ...editFormData, entry_time: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Exit Date & Time</label>
+                  <input
+                    type="datetime-local"
+                    value={editFormData.exit_time}
+                    onChange={(e) => setEditFormData({ ...editFormData, exit_time: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              {/* Price & Quantity Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">
+                    Entry Price ({getCurrencySymbol(editFormData.currency || "USD")})
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editFormData.entry_price}
+                    onChange={(e) => setEditFormData({ ...editFormData, entry_price: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">
+                    Exit Price ({getCurrencySymbol(editFormData.currency || "USD")})
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editFormData.exit_price}
+                    onChange={(e) => setEditFormData({ ...editFormData, exit_price: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Quantity / Lots</label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    value={editFormData.quantity}
+                    onChange={(e) => setEditFormData({ ...editFormData, quantity: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Multiplier</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editFormData.contract_size}
+                    onChange={(e) => setEditFormData({ ...editFormData, contract_size: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 font-mono text-foreground focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Commission, Fees, SL, TP */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-[#0a0c10] p-3 rounded-lg border border-[#202634]">
+                <div>
+                  <label className="block text-muted-foreground text-[11px] mb-1">
+                    Commission ({getCurrencySymbol(editFormData.currency || "USD")})
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editFormData.commission}
+                    onChange={(e) => setEditFormData({ ...editFormData, commission: e.target.value })}
+                    className="h-8 w-full rounded border border-[#202634] bg-[#141821] px-2 font-mono text-foreground"
+                  />
+                </div>
+                <div>
+                  <label className="block text-muted-foreground text-[11px] mb-1">
+                    Fees ({getCurrencySymbol(editFormData.currency || "USD")})
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editFormData.fees}
+                    onChange={(e) => setEditFormData({ ...editFormData, fees: e.target.value })}
+                    className="h-8 w-full rounded border border-[#202634] bg-[#141821] px-2 font-mono text-foreground"
+                  />
+                </div>
+                <div>
+                  <label className="block text-muted-foreground text-[11px] mb-1">
+                    Stop Loss ({getCurrencySymbol(editFormData.currency || "USD")})
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editFormData.stop_loss_price}
+                    onChange={(e) => setEditFormData({ ...editFormData, stop_loss_price: e.target.value })}
+                    className="h-8 w-full rounded border border-[#202634] bg-[#141821] px-2 font-mono text-foreground"
+                  />
+                </div>
+                <div>
+                  <label className="block text-muted-foreground text-[11px] mb-1">
+                    Take Profit ({getCurrencySymbol(editFormData.currency || "USD")})
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editFormData.take_profit_price}
+                    onChange={(e) => setEditFormData({ ...editFormData, take_profit_price: e.target.value })}
+                    className="h-8 w-full rounded border border-[#202634] bg-[#141821] px-2 font-mono text-foreground"
+                  />
+                </div>
+              </div>
+
+              {/* Status and Setup */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Position Status</label>
+                  <select
+                    value={editFormData.status || "closed"}
+                    onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="closed">Closed Position</option>
+                    <option value="open">Open Position</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-foreground font-medium mb-1.5">Strategy / Setup Name</label>
+                  <input
+                    type="text"
+                    value={editFormData.setup_name}
+                    onChange={(e) => setEditFormData({ ...editFormData, setup_name: e.target.value })}
+                    className="h-9 w-full rounded-md border border-[#202634] bg-[#141821] px-3 text-foreground focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-foreground font-medium mb-1.5">Execution Notes / Debrief</label>
+                <textarea
+                  rows={2}
+                  value={editFormData.notes}
+                  onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
+                  className="w-full rounded-md border border-[#202634] bg-[#141821] p-3 text-foreground focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-[#202634]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModal(false)
+                    setEditingTrade(null)
+                  }}
+                  className="px-4 py-2 rounded-md border border-[#202634] bg-transparent text-foreground hover:bg-[#141821] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={editSubmitting}
+                  className="px-4 py-2 rounded-md bg-indigo-600 font-semibold text-white shadow hover:bg-indigo-700 disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                >
+                  {editSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* CSV Import Wizard Modal */}
       {showImportWizard && (
         <CSVImportWizard

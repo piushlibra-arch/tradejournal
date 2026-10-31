@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation"
 import { journalApi } from "@/lib/api/journal"
 import { tradesApi, Trade } from "@/lib/api/trades"
 import { formatPnL, pnlColor, cn } from "@/lib/utils"
+import { useAccount } from "@/lib/context/account-context"
+import { resolveTradeCurrency, formatPrice, getCurrencySymbol } from "@/lib/currency"
 import {
   Calendar,
   Save,
@@ -23,6 +25,7 @@ function JournalContent() {
   const [date, setDate] = useState(dateParam || new Date().toISOString().slice(0, 10))
   const [saving, setSaving] = useState(false)
   const [savedSuccess, setSavedSuccess] = useState(false)
+  const { selectedAccountId, accountCurrency } = useAccount()
 
   // Update date if URL query param changes
   useEffect(() => {
@@ -63,25 +66,45 @@ function JournalContent() {
         setMarketBias("Bullish")
       }
 
-      // Load trades for that calendar date
+      // Load trades for that calendar date with 1-day buffer for timezone offset safety
       try {
+        const dObj = new Date(selectedDate)
+        const dayBefore = new Date(dObj)
+        dayBefore.setDate(dayBefore.getDate() - 1)
+        const dayAfter = new Date(dObj)
+        dayAfter.setDate(dayAfter.getDate() + 1)
+
+        const startBuffer = `${dayBefore.getFullYear()}-${String(dayBefore.getMonth() + 1).padStart(2, "0")}-${String(dayBefore.getDate()).padStart(2, "0")}T00:00:00`
+        const endBuffer = `${dayAfter.getFullYear()}-${String(dayAfter.getMonth() + 1).padStart(2, "0")}-${String(dayAfter.getDate()).padStart(2, "0")}T23:59:59`
+
+        const effectiveAccId = !selectedAccountId || selectedAccountId === "all" ? undefined : selectedAccountId
         const res = await tradesApi.list({
-          start_date: `${selectedDate}T00:00:00`,
-          end_date: `${selectedDate}T23:59:59`,
-          page_size: 50,
+          start_date: startBuffer,
+          end_date: endBuffer,
+          page_size: 100,
+          account_id: effectiveAccId,
         })
-        setDayTrades(res.trades)
+
+        // Filter to only trades whose local date matches the selectedDate
+        const matchingTrades = (res.trades || []).filter((t) => {
+          if (!t.entry_time) return false
+          const tDate = new Date(t.entry_time)
+          const localStr = `${tDate.getFullYear()}-${String(tDate.getMonth() + 1).padStart(2, "0")}-${String(tDate.getDate()).padStart(2, "0")}`
+          return localStr === selectedDate
+        })
+
+        setDayTrades(matchingTrades)
       } catch (tErr) {
         setDayTrades([])
       }
     } finally {
       // Finished loading
     }
-  }, [])
+  }, [selectedAccountId])
 
   useEffect(() => {
     loadDataForDate(date)
-  }, [date, loadDataForDate])
+  }, [date, selectedAccountId, loadDataForDate])
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -162,7 +185,7 @@ function JournalContent() {
           <p className="text-[11px] font-medium text-muted-foreground">Session P&L</p>
           <div className="mt-1 flex items-baseline gap-2">
             <p className={cn("text-lg font-mono font-bold", pnlColor(dayNetPnl))}>
-              {formatPnL(dayNetPnl)}
+              {formatPnL(dayNetPnl, accountCurrency)}
             </p>
           </div>
         </div>
@@ -338,32 +361,36 @@ function JournalContent() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#202634]">
-                {dayTrades.map((t) => (
-                  <tr key={t.id} className="hover:bg-[#151a24] transition-colors font-mono">
-                    <td className="px-3 py-2 text-muted-foreground">
-                      {t.entry_time ? new Date(t.entry_time).toLocaleTimeString() : "—"}
-                    </td>
-                    <td className="px-3 py-2 font-bold text-white">{t.symbol}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={cn(
-                          "px-1.5 py-0.5 rounded text-[10px] font-sans font-medium uppercase",
-                          t.direction.toLowerCase() === "long"
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                            : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                        )}
-                      >
-                        {t.direction}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">{t.quantity}</td>
-                    <td className="px-3 py-2">{t.entry_price}</td>
-                    <td className="px-3 py-2">{t.exit_price ?? "—"}</td>
-                    <td className={cn("px-3 py-2 text-right font-bold", pnlColor(t.net_pnl))}>
-                      {formatPnL(t.net_pnl)}
-                    </td>
-                  </tr>
-                ))}
+                {dayTrades.map((t) => {
+                  const tradeCur = resolveTradeCurrency(t, accountCurrency)
+                  const curSym = getCurrencySymbol(tradeCur)
+                  return (
+                    <tr key={t.id} className="hover:bg-[#151a24] transition-colors font-mono">
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {t.entry_time ? new Date(t.entry_time).toLocaleTimeString() : "—"}
+                      </td>
+                      <td className="px-3 py-2 font-bold text-white">{t.symbol}</td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={cn(
+                            "px-1.5 py-0.5 rounded text-[10px] font-sans font-medium uppercase",
+                            t.direction.toLowerCase() === "long"
+                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          )}
+                        >
+                          {t.direction}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">{t.quantity}</td>
+                      <td className="px-3 py-2">{curSym}{t.entry_price}</td>
+                      <td className="px-3 py-2">{t.exit_price ? `${curSym}${t.exit_price}` : "—"}</td>
+                      <td className={cn("px-3 py-2 text-right font-bold", pnlColor(t.net_pnl))}>
+                        {formatPnL(t.net_pnl, tradeCur)}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
